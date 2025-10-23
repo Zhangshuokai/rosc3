@@ -64,7 +64,7 @@ typedef struct {
  * @brief WiFi管理器上下文
  */
 typedef struct {
-    wifi_config_t config;           ///< WiFi配置
+    wifi_manager_config_t config;   ///< WiFi配置
     wifi_status_t status;           ///< 当前状态
     EventGroupHandle_t event_group; ///< 事件组
     SemaphoreHandle_t mutex;        ///< 互斥锁
@@ -121,7 +121,7 @@ static int8_t calculate_rssi_average(void);
  * 公共函数实现
  *******************************************************************/
 
-esp_err_t wifi_manager_init(const wifi_config_t *config)
+esp_err_t wifi_manager_init(const wifi_manager_config_t *config)
 {
     if (config == NULL) {
         ESP_LOGE(TAG, "Config is NULL");
@@ -160,7 +160,7 @@ esp_err_t wifi_manager_init(const wifi_config_t *config)
     }
 
     // 保存配置
-    memcpy(&g_wifi_ctx.config, config, sizeof(wifi_config_t));
+    memcpy(&g_wifi_ctx.config, config, sizeof(wifi_manager_config_t));
 
     // 初始化TCP/IP网络接口
     ret = esp_netif_init();
@@ -280,10 +280,10 @@ esp_err_t wifi_manager_connect(void)
     ESP_LOGI(TAG, "Connecting to WiFi SSID: %s", g_wifi_ctx.config.ssid);
 
     // 配置WiFi参数
-    strncpy((char *)wifi_config.sta.ssid, g_wifi_ctx.config.ssid, 
-            sizeof(wifi_config.sta.ssid) - 1);
-    strncpy((char *)wifi_config.sta.password, g_wifi_ctx.config.password,
-            sizeof(wifi_config.sta.password) - 1);
+    strlcpy((char *)wifi_config.sta.ssid, g_wifi_ctx.config.ssid,
+            sizeof(wifi_config.sta.ssid));
+    strlcpy((char *)wifi_config.sta.password, g_wifi_ctx.config.password,
+            sizeof(wifi_config.sta.password));
     wifi_config.sta.threshold.authmode = g_wifi_ctx.config.auth_mode;
     wifi_config.sta.pmf_cfg.capable = true;
     wifi_config.sta.pmf_cfg.required = false;
@@ -662,15 +662,15 @@ esp_err_t wifi_manager_set_auto_reconnect(bool enable)
         
         if (enable) {
             ESP_LOGI(TAG, "Auto-reconnect enabled");
-            ESP_LOGI(TAG, "  Base delay: %lu ms", 
+            ESP_LOGI(TAG, "  Base delay: %lu ms",
                      g_wifi_ctx.reconnect_params.base_delay_ms);
-            ESP_LOGI(TAG, "  Max delay: %lu ms", 
+            ESP_LOGI(TAG, "  Max delay: %lu ms",
                      g_wifi_ctx.reconnect_params.max_delay_ms);
-            ESP_LOGI(TAG, "  Max attempts: %d %s", 
+            ESP_LOGI(TAG, "  Max attempts: %d %s",
                      g_wifi_ctx.reconnect_params.max_attempts,
-                     g_wifi_ctx.reconnect_params.max_attempts == 0 ? 
+                     g_wifi_ctx.reconnect_params.max_attempts == 0 ?
                      "(unlimited)" : "");
-            ESP_LOGI(TAG, "  Backoff factor: %.2f", 
+            ESP_LOGI(TAG, "  Backoff factor: %.2f",
                      g_wifi_ctx.reconnect_params.backoff_factor);
         } else {
             ESP_LOGI(TAG, "Auto-reconnect disabled");
@@ -684,180 +684,180 @@ esp_err_t wifi_manager_set_auto_reconnect(bool enable)
             g_wifi_ctx.reconnect_attempt = 0;
         }
         
-        /*******************************************************************
-         * WiFi监控相关函数实现
-         *******************************************************************/
-        
-        /**
-         * @brief 更新RSSI统计信息
-         */
-        static void update_rssi_stats(int8_t rssi)
-        {
-            if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                // 添加到滑动窗口
-                g_wifi_ctx.rssi_window[g_wifi_ctx.rssi_window_index] = rssi;
-                g_wifi_ctx.rssi_window_index =
-                    (g_wifi_ctx.rssi_window_index + 1) % RSSI_WINDOW_SIZE;
-                
-                if (g_wifi_ctx.rssi_window_count < RSSI_WINDOW_SIZE) {
-                    g_wifi_ctx.rssi_window_count++;
-                }
-                
-                // 更新最小值和最大值
-                if (rssi < g_wifi_ctx.stats.rssi_min || g_wifi_ctx.stats.rssi_min == 0) {
-                    g_wifi_ctx.stats.rssi_min = rssi;
-                }
-                if (rssi > g_wifi_ctx.stats.rssi_max) {
-                    g_wifi_ctx.stats.rssi_max = rssi;
-                }
-                
-                // 计算平均值
-                g_wifi_ctx.stats.rssi_avg = calculate_rssi_average();
-                
-                xSemaphoreGive(g_wifi_ctx.mutex);
-            }
-        }
-        
-        /**
-         * @brief 计算RSSI滑动窗口平均值
-         */
-        static int8_t calculate_rssi_average(void)
-        {
-            if (g_wifi_ctx.rssi_window_count == 0) {
-                return 0;
-            }
-            
-            int32_t sum = 0;
-            for (uint8_t i = 0; i < g_wifi_ctx.rssi_window_count; i++) {
-                sum += g_wifi_ctx.rssi_window[i];
-            }
-            
-            return (int8_t)(sum / g_wifi_ctx.rssi_window_count);
-        }
-        
-        /**
-         * @brief WiFi监控任务
-         */
-        static void wifi_monitor_task(void *pvParameters)
-        {
-            ESP_LOGI(TAG, "WiFi monitor task started");
-            
-            while (g_wifi_ctx.monitor_running) {
-                // 检查WiFi是否已连接
-                if (g_wifi_ctx.status.state == WIFI_STATE_CONNECTED) {
-                    wifi_ap_record_t ap_info;
-                    esp_err_t ret = esp_wifi_sta_get_ap_info(&ap_info);
-                    
-                    if (ret == ESP_OK) {
-                        int8_t rssi = ap_info.rssi;
-                        
-                        // 更新RSSI统计
-                        update_rssi_stats(rssi);
-                        
-                        // RSSI低于阈值时输出警告
-                        if (rssi < RSSI_WARN_THRESHOLD) {
-                            ESP_LOGW(TAG, "Low WiFi signal: %d dBm (threshold: %d dBm)",
-                                     rssi, RSSI_WARN_THRESHOLD);
-                        }
-                        
-                        ESP_LOGD(TAG, "RSSI: %d dBm, Avg: %d dBm, Min: %d dBm, Max: %d dBm",
-                                 rssi, g_wifi_ctx.stats.rssi_avg,
-                                 g_wifi_ctx.stats.rssi_min, g_wifi_ctx.stats.rssi_max);
-                    } else {
-                        ESP_LOGD(TAG, "Failed to get AP info: %s", esp_err_to_name(ret));
-                    }
-                    
-                    // 更新累计在线时间
-                    if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                        if (g_wifi_ctx.connect_timestamp > 0) {
-                            uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
-                            uint32_t online_duration_ms = current_time - g_wifi_ctx.connect_timestamp;
-                            g_wifi_ctx.stats.uptime_sec = online_duration_ms / 1000;
-                        }
-                        xSemaphoreGive(g_wifi_ctx.mutex);
-                    }
-                }
-                
-                // 延迟指定间隔
-                vTaskDelay(pdMS_TO_TICKS(g_wifi_ctx.monitor_interval_ms));
-            }
-            
-            ESP_LOGI(TAG, "WiFi monitor task stopped");
-            g_wifi_ctx.monitor_task = NULL;
-            vTaskDelete(NULL);
-        }
-        
-        esp_err_t wifi_manager_get_stats(wifi_stats_t *stats)
-        {
-            if (stats == NULL) {
-                ESP_LOGE(TAG, "Stats pointer is NULL");
-                return ESP_ERR_INVALID_ARG;
-            }
-            
-            if (!g_wifi_ctx.initialized) {
-                ESP_LOGE(TAG, "WiFi manager not initialized");
-                return ESP_ERR_WIFI_NOT_INIT;
-            }
-            
-            // 使用互斥锁保护统计数据读取
-            if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
-                memcpy(stats, &g_wifi_ctx.stats, sizeof(wifi_stats_t));
-                xSemaphoreGive(g_wifi_ctx.mutex);
-                return ESP_OK;
-            } else {
-                ESP_LOGE(TAG, "Failed to acquire mutex");
-                return ESP_ERR_TIMEOUT;
-            }
-        }
-        
-        esp_err_t wifi_manager_start_monitor(uint32_t interval_ms)
-        {
-            if (!g_wifi_ctx.initialized) {
-                ESP_LOGE(TAG, "WiFi manager not initialized");
-                return ESP_ERR_WIFI_NOT_INIT;
-            }
-            
-            if (g_wifi_ctx.monitor_running) {
-                ESP_LOGE(TAG, "Monitor task already running");
-                return ESP_ERR_INVALID_STATE;
-            }
-            
-            // 验证间隔参数
-            if (interval_ms < 100 || interval_ms > 60000) {
-                ESP_LOGE(TAG, "Invalid monitor interval: %lu ms (valid range: 100-60000)",
-                         interval_ms);
-                return ESP_ERR_INVALID_ARG;
-            }
-            
-            g_wifi_ctx.monitor_interval_ms = interval_ms;
-            g_wifi_ctx.monitor_running = true;
-            
-            // 创建监控任务
-            BaseType_t ret = xTaskCreate(
-                wifi_monitor_task,
-                "wifi_monitor",
-                MONITOR_TASK_STACK_SIZE,
-                NULL,
-                MONITOR_TASK_PRIORITY,
-                &g_wifi_ctx.monitor_task
-            );
-            
-            if (ret != pdPASS) {
-                ESP_LOGE(TAG, "Failed to create monitor task");
-                g_wifi_ctx.monitor_running = false;
-                return ESP_ERR_NO_MEM;
-            }
-            
-            ESP_LOGI(TAG, "WiFi monitor started, interval: %lu ms", interval_ms);
-            return ESP_OK;
-        }
-        
         xSemaphoreGive(g_wifi_ctx.mutex);
         return ESP_OK;
     } else {
         ESP_LOGE(TAG, "Failed to acquire mutex");
         return ESP_ERR_TIMEOUT;
     }
+}
+
+/*******************************************************************
+ * WiFi监控相关函数实现
+ *******************************************************************/
+
+/**
+ * @brief 更新RSSI统计信息
+ */
+static void update_rssi_stats(int8_t rssi)
+{
+    if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        // 添加到滑动窗口
+        g_wifi_ctx.rssi_window[g_wifi_ctx.rssi_window_index] = rssi;
+        g_wifi_ctx.rssi_window_index =
+            (g_wifi_ctx.rssi_window_index + 1) % RSSI_WINDOW_SIZE;
+        
+        if (g_wifi_ctx.rssi_window_count < RSSI_WINDOW_SIZE) {
+            g_wifi_ctx.rssi_window_count++;
+        }
+        
+        // 更新最小值和最大值
+        if (rssi < g_wifi_ctx.stats.rssi_min || g_wifi_ctx.stats.rssi_min == 0) {
+            g_wifi_ctx.stats.rssi_min = rssi;
+        }
+        if (rssi > g_wifi_ctx.stats.rssi_max) {
+            g_wifi_ctx.stats.rssi_max = rssi;
+        }
+        
+        // 计算平均值
+        g_wifi_ctx.stats.rssi_avg = calculate_rssi_average();
+        
+        xSemaphoreGive(g_wifi_ctx.mutex);
+    }
+}
+
+/**
+ * @brief 计算RSSI滑动窗口平均值
+ */
+static int8_t calculate_rssi_average(void)
+{
+    if (g_wifi_ctx.rssi_window_count == 0) {
+        return 0;
+    }
+    
+    int32_t sum = 0;
+    for (uint8_t i = 0; i < g_wifi_ctx.rssi_window_count; i++) {
+        sum += g_wifi_ctx.rssi_window[i];
+    }
+    
+    return (int8_t)(sum / g_wifi_ctx.rssi_window_count);
+}
+
+/**
+ * @brief WiFi监控任务
+ */
+static void wifi_monitor_task(void *pvParameters)
+{
+    ESP_LOGI(TAG, "WiFi monitor task started");
+    
+    while (g_wifi_ctx.monitor_running) {
+        // 检查WiFi是否已连接
+        if (g_wifi_ctx.status.state == WIFI_STATE_CONNECTED) {
+            wifi_ap_record_t ap_info;
+            esp_err_t ret = esp_wifi_sta_get_ap_info(&ap_info);
+            
+            if (ret == ESP_OK) {
+                int8_t rssi = ap_info.rssi;
+                
+                // 更新RSSI统计
+                update_rssi_stats(rssi);
+                
+                // RSSI低于阈值时输出警告
+                if (rssi < RSSI_WARN_THRESHOLD) {
+                    ESP_LOGW(TAG, "Low WiFi signal: %d dBm (threshold: %d dBm)",
+                             rssi, RSSI_WARN_THRESHOLD);
+                }
+                
+                ESP_LOGD(TAG, "RSSI: %d dBm, Avg: %d dBm, Min: %d dBm, Max: %d dBm",
+                         rssi, g_wifi_ctx.stats.rssi_avg,
+                         g_wifi_ctx.stats.rssi_min, g_wifi_ctx.stats.rssi_max);
+            } else {
+                ESP_LOGD(TAG, "Failed to get AP info: %s", esp_err_to_name(ret));
+            }
+            
+            // 更新累计在线时间
+            if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+                if (g_wifi_ctx.connect_timestamp > 0) {
+                    uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+                    uint32_t online_duration_ms = current_time - g_wifi_ctx.connect_timestamp;
+                    g_wifi_ctx.stats.uptime_sec = online_duration_ms / 1000;
+                }
+                xSemaphoreGive(g_wifi_ctx.mutex);
+            }
+        }
+        
+        // 延迟指定间隔
+        vTaskDelay(pdMS_TO_TICKS(g_wifi_ctx.monitor_interval_ms));
+    }
+    
+    ESP_LOGI(TAG, "WiFi monitor task stopped");
+    g_wifi_ctx.monitor_task = NULL;
+    vTaskDelete(NULL);
+}
+
+esp_err_t wifi_manager_get_stats(wifi_stats_t *stats)
+{
+    if (stats == NULL) {
+        ESP_LOGE(TAG, "Stats pointer is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!g_wifi_ctx.initialized) {
+        ESP_LOGE(TAG, "WiFi manager not initialized");
+        return ESP_ERR_WIFI_NOT_INIT;
+    }
+    
+    // 使用互斥锁保护统计数据读取
+    if (xSemaphoreTake(g_wifi_ctx.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        memcpy(stats, &g_wifi_ctx.stats, sizeof(wifi_stats_t));
+        xSemaphoreGive(g_wifi_ctx.mutex);
+        return ESP_OK;
+    } else {
+        ESP_LOGE(TAG, "Failed to acquire mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+}
+
+esp_err_t wifi_manager_start_monitor(uint32_t interval_ms)
+{
+    if (!g_wifi_ctx.initialized) {
+        ESP_LOGE(TAG, "WiFi manager not initialized");
+        return ESP_ERR_WIFI_NOT_INIT;
+    }
+    
+    if (g_wifi_ctx.monitor_running) {
+        ESP_LOGE(TAG, "Monitor task already running");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // 验证间隔参数
+    if (interval_ms < 100 || interval_ms > 60000) {
+        ESP_LOGE(TAG, "Invalid monitor interval: %lu ms (valid range: 100-60000)",
+                 interval_ms);
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    g_wifi_ctx.monitor_interval_ms = interval_ms;
+    g_wifi_ctx.monitor_running = true;
+    
+    // 创建监控任务
+    BaseType_t ret = xTaskCreate(
+        wifi_monitor_task,
+        "wifi_monitor",
+        MONITOR_TASK_STACK_SIZE,
+        NULL,
+        MONITOR_TASK_PRIORITY,
+        &g_wifi_ctx.monitor_task
+    );
+    
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create monitor task");
+        g_wifi_ctx.monitor_running = false;
+        return ESP_ERR_NO_MEM;
+    }
+    
+    ESP_LOGI(TAG, "WiFi monitor started, interval: %lu ms", interval_ms);
+    return ESP_OK;
 }
 
 esp_err_t wifi_manager_set_reconnect_params(const wifi_reconnect_params_t *params)

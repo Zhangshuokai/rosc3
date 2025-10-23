@@ -5,8 +5,9 @@ idf_component_register(
         "lvgl_demo_ui.c"
         "common/config/config_manager.c"
         "common/wifi_manager/wifi_manager.c"
-        "common/ros_comm/ros_comm.c"
-        "common/ros_comm/micro_ros_transport.c"
+        # 暂时禁用ROS通信模块（需要micro-ros库配置）
+        # "common/ros_comm/ros_comm.c"
+        # "common/ros_comm/micro_ros_transport.c"
         "common/oled/oled_display.c"
         "common/oled/oled_ui.c"
     INCLUDE_DIRS
@@ -14,7 +15,7 @@ idf_component_register(
         "../include"
         "common/config"
         "common/wifi_manager"
-        "common/ros_comm"
+        # "common/ros_comm"
         "common/oled"
     REQUIRES
         driver

@@ -244,7 +244,7 @@ esp_err_t oled_display_init(void)
     ESP_LOGI(TAG, "注册LVGL显示驱动成功");
 
     // 7. 设置单色主题
-    lv_theme_t *theme = lv_theme_mono_init(s_disp, false, &lv_font_montserrat_12);
+    lv_theme_t *theme = lv_theme_mono_init(s_disp, false, &lv_font_montserrat_14);
     if (theme) {
         lv_disp_set_theme(s_disp, theme);
         ESP_LOGI(TAG, "设置单色主题成功");

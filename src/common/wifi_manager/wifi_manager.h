@@ -43,7 +43,7 @@ typedef struct {
     wifi_auth_mode_t auth_mode; ///< 加密方式（WPA2/WPA3）
     uint8_t max_retry;          ///< 最大重试次数
     uint32_t timeout_ms;        ///< 连接超时（毫秒）
-} wifi_config_t;
+} wifi_manager_config_t;
 
 /**
  * @brief WiFi状态信息
@@ -96,7 +96,7 @@ typedef struct {
  * @note 此函数不是线程安全的，应在主任务中调用
  * @warning 重复调用会返回错误
  */
-esp_err_t wifi_manager_init(const wifi_config_t *config);
+esp_err_t wifi_manager_init(const wifi_manager_config_t *config);
 
 /**
  * @brief 连接WiFi网络

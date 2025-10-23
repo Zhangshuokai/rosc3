@@ -17,7 +17,35 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <uxr/client/profile/transport/custom/custom_transport.h>
+
+// 条件编译：如果Micro-ROS头文件可用则包含，否则使用临时定义
+#ifdef __has_include
+  #if __has_include(<uxr/client/profile/transport/custom/custom_transport.h>)
+    #include <uxr/client/profile/transport/custom/custom_transport.h>
+    #define MICRO_ROS_AVAILABLE 1
+  #else
+    #define MICRO_ROS_AVAILABLE 0
+  #endif
+#else
+  // 编译器不支持__has_include，尝试直接包含
+  #if __GNUC__ >= 5 || defined(__clang__)
+    #include <uxr/client/profile/transport/custom/custom_transport.h>
+    #define MICRO_ROS_AVAILABLE 1
+  #else
+    #define MICRO_ROS_AVAILABLE 0
+  #endif
+#endif
+
+// 如果Micro-ROS不可用，提供占位符定义
+#if !MICRO_ROS_AVAILABLE
+/**
+ * @brief 临时占位符：uxrCustomTransport结构体
+ * @note 当Micro-ROS组件正确安装后，这个定义将被实际的头文件替换
+ */
+struct uxrCustomTransport {
+    void* args;  ///< 传输层参数
+};
+#endif
 
 #ifdef __cplusplus
 extern "C" {

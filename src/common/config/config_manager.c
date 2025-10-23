@@ -20,6 +20,7 @@
 // ESP-IDF网络头文件
 #include "esp_netif.h"
 #include "lwip/inet.h"
+#include "lwip/sockets.h"
 
 // ESP-IDF系统头文件
 #include "esp_log.h"
@@ -394,8 +395,9 @@ esp_err_t config_load(node_config_t *config) {
      *******************************************************************/
     
     // WiFi SSID
-    ret = nvs_get_str(s_nvs_handle, CFG_KEY_WIFI_SSID, 
-                      config->wifi_ssid, sizeof(config->wifi_ssid));
+    size_t ssid_len = sizeof(config->wifi_ssid);
+    ret = nvs_get_str(s_nvs_handle, CFG_KEY_WIFI_SSID,
+                      config->wifi_ssid, &ssid_len);
     if (ret == ESP_ERR_NVS_NOT_FOUND) {
         // 使用sdkconfig默认值
         #ifdef CONFIG_WIFI_SSID
@@ -412,8 +414,9 @@ esp_err_t config_load(node_config_t *config) {
     }
     
     // WiFi密码
+    size_t pwd_len = sizeof(config->wifi_password);
     ret = nvs_get_str(s_nvs_handle, CFG_KEY_WIFI_PASSWORD,
-                      config->wifi_password, sizeof(config->wifi_password));
+                      config->wifi_password, &pwd_len);
     if (ret == ESP_ERR_NVS_NOT_FOUND) {
         #ifdef CONFIG_WIFI_PASSWORD
         strlcpy(config->wifi_password, CONFIG_WIFI_PASSWORD, 
@@ -477,8 +480,9 @@ esp_err_t config_load(node_config_t *config) {
      *******************************************************************/
     
     // ROS Agent IP
+    size_t ip_len = sizeof(config->ros_agent_ip);
     ret = nvs_get_str(s_nvs_handle, CFG_KEY_ROS_AGENT_IP,
-                      config->ros_agent_ip, sizeof(config->ros_agent_ip));
+                      config->ros_agent_ip, &ip_len);
     if (ret == ESP_ERR_NVS_NOT_FOUND) {
         #ifdef CONFIG_MICRO_ROS_AGENT_IP
         strlcpy(config->ros_agent_ip, CONFIG_MICRO_ROS_AGENT_IP,
@@ -508,8 +512,9 @@ esp_err_t config_load(node_config_t *config) {
     }
     
     // ROS节点名称
+    size_t node_name_len = sizeof(config->ros_node_name);
     ret = nvs_get_str(s_nvs_handle, CFG_KEY_ROS_NODE_NAME,
-                      config->ros_node_name, sizeof(config->ros_node_name));
+                      config->ros_node_name, &node_name_len);
     if (ret == ESP_ERR_NVS_NOT_FOUND) {
         #ifdef CONFIG_ROS_NODE_NAME
         strlcpy(config->ros_node_name, CONFIG_ROS_NODE_NAME,
@@ -525,8 +530,9 @@ esp_err_t config_load(node_config_t *config) {
     }
     
     // ROS命名空间
+    size_t ns_len = sizeof(config->ros_node_namespace);
     ret = nvs_get_str(s_nvs_handle, CFG_KEY_ROS_NAMESPACE,
-                      config->ros_node_namespace, sizeof(config->ros_node_namespace));
+                      config->ros_node_namespace, &ns_len);
     if (ret == ESP_ERR_NVS_NOT_FOUND) {
         #ifdef CONFIG_ROS_NODE_NAMESPACE
         strlcpy(config->ros_node_namespace, CONFIG_ROS_NODE_NAMESPACE,

@@ -88,7 +88,7 @@ esp_err_t oled_ui_create_status_screen(void)
         return ESP_ERR_NO_MEM;
     }
     lv_label_set_text(label_title, node_name);
-    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label_title, &lv_font_montserrat_14, 0);
     lv_obj_align(label_title, LV_ALIGN_TOP_MID, 0, 0);
 
     // 创建WiFi状态标签（第2行，左对齐）
@@ -100,7 +100,7 @@ esp_err_t oled_ui_create_status_screen(void)
         return ESP_ERR_NO_MEM;
     }
     lv_label_set_text(label_wifi, "WiFi: x Disconnected");
-    lv_obj_set_style_text_font(label_wifi, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label_wifi, &lv_font_montserrat_14, 0);
     lv_obj_align(label_wifi, LV_ALIGN_TOP_LEFT, 0, 14);
 
     // 创建ROS状态标签（第3行，左对齐）
@@ -114,7 +114,7 @@ esp_err_t oled_ui_create_status_screen(void)
         return ESP_ERR_NO_MEM;
     }
     lv_label_set_text(label_ros, "ROS:  x Disconnected");
-    lv_obj_set_style_text_font(label_ros, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label_ros, &lv_font_montserrat_14, 0);
     lv_obj_align(label_ros, LV_ALIGN_TOP_LEFT, 0, 28);
 
     // 创建IP地址标签（第4行，左对齐）
@@ -130,7 +130,7 @@ esp_err_t oled_ui_create_status_screen(void)
         return ESP_ERR_NO_MEM;
     }
     lv_label_set_text(label_ip, "IP: ---.---.---.---");
-    lv_obj_set_style_text_font(label_ip, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label_ip, &lv_font_montserrat_14, 0);
     lv_obj_align(label_ip, LV_ALIGN_TOP_LEFT, 0, 42);
 
     // 创建运行时间标签（第5行，左对齐）
@@ -148,7 +148,7 @@ esp_err_t oled_ui_create_status_screen(void)
         return ESP_ERR_NO_MEM;
     }
     lv_label_set_text(label_uptime, "Up: 00:00:00");
-    lv_obj_set_style_text_font(label_uptime, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label_uptime, &lv_font_montserrat_14, 0);
     lv_obj_align(label_uptime, LV_ALIGN_TOP_LEFT, 0, 56);
 
     // 标记UI已创建
