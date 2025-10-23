@@ -1,0 +1,85 @@
+---
+# C语言代码格式化配置
+# 基于Google风格，针对ESP32-C3项目定制
+BasedOnStyle: Google
+
+# 语言
+Language: Cpp
+Standard: c++11
+
+# 缩进
+IndentWidth: 4
+UseTab: Never
+TabWidth: 4
+IndentCaseLabels: true
+IndentPPDirectives: AfterHash
+
+# 行宽
+ColumnLimit: 100
+
+# 大括号
+BreakBeforeBraces: Linux
+BraceWrapping:
+  AfterFunction: false
+  AfterControlStatement: false
+  AfterEnum: false
+  AfterStruct: false
+
+# 函数
+AllowShortFunctionsOnASingleLine: Empty
+AlwaysBreakAfterReturnType: None
+BinPackArguments: false
+BinPackParameters: false
+
+# 控制语句
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: false
+
+# 指针和引用
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+# 空格
+SpaceAfterCStyleCast: true
+SpaceBeforeParens: ControlStatements
+SpaceInEmptyParentheses: false
+SpacesInContainerLiterals: false
+
+# 对齐
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+
+# 注释
+ReflowComments: true
+
+# 包含顺序
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  # 1. 本模块头文件
+  - Regex:           '^".*\.h"$'
+    Priority:        1
+  # 2. C标准库
+  - Regex:           '^<(std|string|math|assert).*>$'
+    Priority:        2
+  # 3. ESP-IDF
+  - Regex:           '^<esp_.*\.h>$'
+    Priority:        3
+  - Regex:           '^<(freertos|driver)/.*\.h>$'
+    Priority:        3
+  # 4. 第三方库
+  - Regex:           '^<lvgl.*\.h>$'
+    Priority:        4
+  # 5. 项目头文件
+  - Regex:           '^<common/.*\.h>$'
+    Priority:        5
+
+# 其他
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+...
