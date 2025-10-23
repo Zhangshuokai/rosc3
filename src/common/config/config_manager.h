@@ -36,6 +36,32 @@ extern "C" {
 #define CFG_KEY_ROS_AGENT_PORT   "ros_port"
 #define CFG_KEY_ROS_NODE_NAME    "ros_node"
 #define CFG_KEY_LOG_LEVEL        "log_level"
+#define CFG_KEY_WIFI_MAX_RETRY   "wifi_retry"
+#define CFG_KEY_WIFI_TIMEOUT     "wifi_timeout"
+#define CFG_KEY_ROS_NAMESPACE    "ros_ns"
+#define CFG_KEY_ROS_DOMAIN_ID    "ros_domain"
+
+/**
+ * @brief 节点配置结构体
+ */
+typedef struct {
+    // WiFi配置
+    char wifi_ssid[32];              ///< WiFi SSID
+    char wifi_password[64];          ///< WiFi密码
+    uint8_t wifi_auth_mode;          ///< 加密方式
+    uint8_t wifi_max_retry;          ///< 最大重试次数
+    uint32_t wifi_timeout_ms;        ///< 连接超时（毫秒）
+    
+    // ROS配置
+    char ros_agent_ip[16];           ///< ROS Agent IP地址
+    uint16_t ros_agent_port;         ///< ROS Agent端口
+    char ros_node_name[32];          ///< ROS节点名称
+    char ros_node_namespace[32];     ///< ROS节点命名空间
+    uint8_t ros_domain_id;           ///< ROS Domain ID
+    
+    // 系统配置
+    uint8_t log_level;               ///< 日志级别
+} node_config_t;
 
 /**
  * @brief 初始化配置管理器
@@ -156,6 +182,46 @@ esp_err_t config_save(void);
  * @warning 此操作不可逆，所有配置将丢失
  */
 esp_err_t config_reset_to_defaults(void);
+
+/**
+ * @brief 加载配置（NVS优先，否则使用sdkconfig）
+ *
+ * 按照优先级从NVS和sdkconfig加载配置：
+ * 1. 首先尝试从NVS读取用户配置
+ * 2. 如果NVS中不存在，使用sdkconfig中的CONFIG_XXX宏作为默认值
+ * 3. 首次运行时，将sdkconfig默认值写入NVS
+ *
+ * @param[out] config 配置结构体指针
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: config为NULL
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *
+ * @note 此函数是线程安全的
+ * @note 必须先调用 config_manager_init()
+ */
+esp_err_t config_load(node_config_t *config);
+
+/**
+ * @brief 验证配置有效性
+ *
+ * 验证规则：
+ * - SSID非空（长度>0）
+ * - WiFi密码长度符合要求（WPA2至少8字符）
+ * - IP地址格式正确
+ * - 端口范围1024-65535
+ * - 节点名称非空且符合ROS命名规范
+ *
+ * @param[in] config 配置结构体指针
+ *
+ * @return
+ *   - ESP_OK: 配置有效
+ *   - ESP_ERR_INVALID_ARG: config为NULL或配置无效
+ *
+ * @note 配置无效时会输出详细的错误日志
+ */
+esp_err_t config_validate(const node_config_t *config);
 
 #ifdef __cplusplus
 }

@@ -7,3 +7,10 @@ dependencies:
   
   # ESP LVGL移植层 v1.x
   esp_lvgl_port: "^1"
+  
+  # 使用官方Micro-ROS ESP-IDF组件
+  # 注释：已改用platformio.ini的lib_deps直接从GitHub下载
+  # micro_ros_espidf_component: "*"
+  
+  # 注释：espressif/esp_micro_ros返回403错误，已替换为官方组件
+  # espressif/esp_micro_ros: "^2.0.0"

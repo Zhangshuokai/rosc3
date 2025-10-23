@@ -24,8 +24,8 @@ void lvgl_demo_ui(lv_disp_t *disp)
     /* 设置文本内容 */
     lv_label_set_text(label, "Hello ESP32-C3! Hello LVGL!");
     
-    /* 设置标签宽度为屏幕宽度 */
-    lv_obj_set_width(label, disp->driver->hor_res);
+    /* 设置标签宽度为屏幕宽度（LVGL 8.x兼容API） */
+    lv_obj_set_width(label, lv_disp_get_hor_res(disp));
     
     /* 对齐到屏幕顶部中心 */
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 0);
