@@ -1,0 +1,19 @@
+# ESP-IDF SDK Default Configuration
+# This file will be read during first build to generate complete sdkconfig
+
+# LVGL Related Configuration
+CONFIG_LV_USE_USER_DATA=y           # Allow LVGL to use user data
+CONFIG_LV_COLOR_DEPTH_1=y           # Set LVGL color depth to 1-bit (monochrome display)
+
+# I2C Configuration
+CONFIG_I2C_ISR_IRAM_SAFE=y          # Place I2C interrupt handler in IRAM
+
+# Log Level
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_VERBOSE=y
+
+# FreeRTOS Configuration
+CONFIG_FREERTOS_HZ=1000             # Set FreeRTOS tick frequency to 1000Hz
+
+# Performance Optimization
+CONFIG_COMPILER_OPTIMIZATION_PERF=y # Optimize for performance

@@ -1,0 +1,9 @@
+dependencies:
+  # LVGL图形库 v8.3.x
+  lvgl/lvgl: "~8.3.0"
+  
+  # ESP LCD SH1107/SSD1306驱动组件 v1.x
+  esp_lcd_sh1107: "^1"
+  
+  # ESP LVGL移植层 v1.x
+  esp_lvgl_port: "^1"
