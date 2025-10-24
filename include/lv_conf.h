@@ -113,7 +113,7 @@
 #define LV_FONT_MONTSERRAT_28 0
 
 /* 默认字体 */
-#define LV_FONT_DEFAULT &lv_font_montserrat_12
+#define LV_FONT_DEFAULT &lv_font_montserrat_14
 
 /* 启用内置字体的子像素渲染（仅对16位以上色深有效） */
 #define LV_FONT_SUBPX_BGR 0

@@ -135,6 +135,8 @@ static esp_err_t init_lcd_panel(void)
 
 static void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_map)
 {
+    static uint32_t flush_count = 0;
+    
     if (!s_panel_handle) {
         ESP_LOGE(TAG, "刷新回调：面板句柄无效");
         lv_disp_flush_ready(disp_drv);
@@ -145,6 +147,19 @@ static void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_col
     int offsetx2 = area->x2;
     int offsety1 = area->y1;
     int offsety2 = area->y2;
+
+    // 诊断：记录前几次刷新
+    if (flush_count < 5) {
+        ESP_LOGI(TAG, "刷新回调 #%lu: 区域[%d,%d]-[%d,%d], 数据地址: %p",
+                 flush_count, offsetx1, offsety1, offsetx2, offsety2, color_map);
+        // 打印前几个字节的数据
+        if (color_map) {
+            ESP_LOGI(TAG, "  前4字节数据: %02X %02X %02X %02X",
+                     ((uint8_t*)color_map)[0], ((uint8_t*)color_map)[1],
+                     ((uint8_t*)color_map)[2], ((uint8_t*)color_map)[3]);
+        }
+    }
+    flush_count++;
 
     // 将数据发送到LCD
     esp_lcd_panel_draw_bitmap(s_panel_handle, offsetx1, offsety1, offsetx2 + 1, offsety2 + 1, color_map);
@@ -223,11 +238,20 @@ esp_err_t oled_display_init(void)
     }
     ESP_LOGI(TAG, "注册LVGL显示驱动成功");
 
-    // 7. 设置单色主题
-    lv_theme_t *theme = lv_theme_mono_init(s_disp, false, &lv_font_montserrat_14);
+    // 7. 设置单色主题 - dark_bg参数诊断
+    ESP_LOGI(TAG, "设置单色主题 - dark_bg=true (深色背景)");
+    lv_theme_t *theme = lv_theme_mono_init(s_disp, true, &lv_font_montserrat_14);
     if (theme) {
         lv_disp_set_theme(s_disp, theme);
-        ESP_LOGI(TAG, "设置单色主题成功");
+        ESP_LOGI(TAG, "单色主题设置成功");
+        
+        // 诊断：显式设置屏幕背景色为黑色
+        lv_obj_t *scr = lv_disp_get_scr_act(s_disp);
+        if (scr) {
+            lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+            lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+            ESP_LOGI(TAG, "屏幕背景色已设置为黑色");
+        }
     }
 
     // 8. 创建LVGL定时器任务

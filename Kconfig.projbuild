@@ -1,28 +1,28 @@
-menu "ROSC3 Configuration"
+menu "ROSC3 配置"
 
-    menu "WiFi Configuration"
+    menu "WiFi 配置"
         config WIFI_SSID
-            string "WiFi SSID"
+            string "WiFi 网络名称（SSID）"
             default "YourWiFi"
             help
-                WiFi network SSID to connect to.
-                This can be overridden by NVS storage at runtime.
+                要连接的 WiFi 网络名称。
+                此配置可在运行时通过 NVS 存储覆盖。
 
         config WIFI_PASSWORD
-            string "WiFi Password"
+            string "WiFi 密码"
             default "YourPassword"
             help
-                WiFi network password.
-                This can be overridden by NVS storage at runtime.
+                WiFi 网络密码。
+                此配置可在运行时通过 NVS 存储覆盖。
                 
-                WARNING: Password is stored in plain text in sdkconfig.
-                For production, use NVS encrypted storage.
+                警告：密码以明文形式存储在 sdkconfig 文件中。
+                生产环境请使用 NVS 加密存储。
 
         choice WIFI_AUTH_MODE
-            prompt "WiFi Authentication Mode"
+            prompt "WiFi 认证模式"
             default WIFI_AUTH_WPA2_PSK
             help
-                WiFi network authentication mode.
+                WiFi 网络认证模式。
 
             config WIFI_AUTH_WPA2_PSK
                 bool "WPA2-PSK"
@@ -36,79 +36,79 @@ menu "ROSC3 Configuration"
             default 7 if WIFI_AUTH_WPA3_PSK
 
         config WIFI_MAX_RETRY
-            int "WiFi Maximum Retry Count"
+            int "WiFi 最大重试次数"
             range 0 255
             default 5
             help
-                Maximum number of retry attempts when WiFi connection fails.
-                Set to 0 for unlimited retries.
+                WiFi 连接失败时的最大重试次数。
+                设置为 0 表示无限重试。
 
         config WIFI_CONNECT_TIMEOUT_MS
-            int "WiFi Connection Timeout (ms)"
+            int "WiFi 连接超时时间（毫秒）"
             range 1000 60000
             default 10000
             help
-                Timeout for WiFi connection attempt in milliseconds.
+                WiFi 连接尝试的超时时间，单位为毫秒。
     endmenu
 
-    menu "ROS Configuration"
+    menu "ROS 配置"
         config MICRO_ROS_AGENT_IP
-            string "Micro-ROS Agent IP Address"
+            string "Micro-ROS Agent IP地址"
             default "192.168.1.10"
             help
-                IP address of the Micro-ROS agent.
-                Must be a valid IPv4 address format (xxx.xxx.xxx.xxx).
+                Micro-ROS Agent 的 IP 地址。
+                必须是有效的 IPv4 地址格式（xxx.xxx.xxx.xxx）。
 
         config MICRO_ROS_AGENT_PORT
-            int "Micro-ROS Agent Port"
+            int "Micro-ROS Agent 端口"
             range 1024 65535
             default 8888
             help
-                UDP port number of the Micro-ROS agent.
+                Micro-ROS Agent 的 UDP 端口号。
 
         config ROS_NODE_NAME
-            string "ROS Node Name"
+            string "ROS 节点名称"
             default "esp32_node"
             help
-                ROS 2 node name.
-                Must contain only letters, numbers, and underscores.
-                Cannot start with a number.
+                ROS 2 节点名称。
+                只能包含字母、数字和下划线。
+                不能以数字开头。
 
         config ROS_NODE_NAMESPACE
-            string "ROS Node Namespace"
+            string "ROS 节点命名空间"
             default "/"
             help
-                ROS 2 node namespace.
-                Use "/" for global namespace.
+                ROS 2 节点命名空间。
+                使用 "/" 表示全局命名空间。
 
         config ROS_DOMAIN_ID
-            int "ROS Domain ID"
+            int "ROS Domain ID（域标识）"
             range 0 255
             default 0
             help
-                ROS 2 domain ID for network isolation.
-                Different domains cannot communicate with each other.
+                ROS 2 域标识，用于网络隔离。
+                不同域之间无法相互通信。
     endmenu
 
-    menu "System Configuration"
+    menu "系统配置"
         choice LOG_LEVEL
-            prompt "Default Log Level"
+            prompt "默认日志级别"
             default LOG_LEVEL_INFO
             help
-                Default log level for the system.
+                系统的默认日志级别。
 
             config LOG_LEVEL_NONE
-                bool "None"
+                bool "无日志"
             config LOG_LEVEL_ERROR
-                bool "Error"
+                bool "错误"
             config LOG_LEVEL_WARN
-                bool "Warning"
+                bool "警告"
             config LOG_LEVEL_INFO
-                bool "Info"
+                bool "信息"
             config LOG_LEVEL_DEBUG
-                bool "Debug"
+                bool "调试"
             config LOG_LEVEL_VERBOSE
-                bool "Verbose"
+                bool "详细"
         endchoice
 
         config LOG_LEVEL_VALUE

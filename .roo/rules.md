@@ -789,6 +789,9 @@ C:\Users\wj329\.platformio\penv\Scripts\platformio.exe run --environment esp32-c
 # 编译并烧录
 C:\Users\wj329\.platformio\penv\Scripts\platformio.exe run --environment esp32-c3 --target upload
 
+# 运行 menuconfig 配置工具（✅正确命令 - 2025-10-24）
+C:\Users\wj329\.platformio\penv\Scripts\platformio.exe run --target menuconfig --environment esp32-c3
+
 # 监控串口
 C:\Users\wj329\.platformio\penv\Scripts\platformio.exe device monitor
 

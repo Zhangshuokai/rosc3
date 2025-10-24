@@ -106,6 +106,24 @@ rosc3/
 
 ## 配置说明
 
+### Menuconfig 语言切换
+
+本项目的 menuconfig 配置界面支持**中英文双语切换**，让你可以使用熟悉的语言进行系统配置。
+
+**快速切换**：
+```bash
+# 切换到中文
+python tools/menuconfig_lang.py zh
+
+# 切换到英文
+python tools/menuconfig_lang.py en
+
+# 查看当前状态
+python tools/menuconfig_lang.py --status
+```
+
+**完整使用指南**：详见 [Menuconfig 中文化快速入门](docs/MENUCONFIG_I18N_QUICKSTART.md)
+
 ### 修改I2C引脚
 
 在[`src/main.c`](src/main.c)中修改：
@@ -129,8 +147,14 @@ rosc3/
 
 ## 文档
 
+### 项目文档
 - 📖 [完整架构设计文档](docs/PLATFORMIO_ARCHITECTURE_DESIGN.md) - 详细的项目架构、配置说明和开发指南
 - 🔌 [硬件连接说明](docs/HARDWARE_CONNECTION.md) - 引脚连接和常见硬件问题排查
+
+### Menuconfig 中文化文档
+- 🚀 [快速入门指南](docs/MENUCONFIG_I18N_QUICKSTART.md) - 3分钟上手中英文切换
+- 🏗️ [架构设计文档](docs/MENUCONFIG_I18N_DESIGN.md) - 完整的技术架构和实现细节
+- 🧪 [测试报告](docs/MENUCONFIG_I18N_TEST_REPORT.md) - 功能验证和测试结果
 
 ## 常见问题
 

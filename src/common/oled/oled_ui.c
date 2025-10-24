@@ -143,6 +143,12 @@ esp_err_t oled_ui_create_status_screen(void)
     }
     lv_label_set_text(label_title, node_name);
     lv_obj_set_style_text_font(label_title, &lv_font_montserrat_14, 0);
+    
+    // 1bpp模式调试：尝试显式设置文本颜色和不透明度
+    lv_obj_set_style_text_color(label_title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_opa(label_title, LV_OPA_COVER, 0);
+    
+    ESP_LOGI(TAG, "标题标签创建 - 地址: %p, 文本: %s", label_title, node_name);
     lv_obj_align(label_title, LV_ALIGN_TOP_MID, 0, 0);
 
     // 创建WiFi状态标签（第2行，左对齐）
@@ -155,6 +161,9 @@ esp_err_t oled_ui_create_status_screen(void)
     }
     lv_label_set_text(label_wifi, "WiFi: x Disconnected");
     lv_obj_set_style_text_font(label_wifi, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_wifi, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_opa(label_wifi, LV_OPA_COVER, 0);
+    ESP_LOGI(TAG, "WiFi标签创建 - 地址: %p", label_wifi);
     lv_obj_align(label_wifi, LV_ALIGN_TOP_LEFT, 0, 14);
 
     // 创建ROS状态标签（第3行，左对齐）
@@ -169,6 +178,9 @@ esp_err_t oled_ui_create_status_screen(void)
     }
     lv_label_set_text(label_ros, "ROS:  x Disconnected");
     lv_obj_set_style_text_font(label_ros, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_ros, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_opa(label_ros, LV_OPA_COVER, 0);
+    ESP_LOGI(TAG, "ROS标签创建 - 地址: %p", label_ros);
     lv_obj_align(label_ros, LV_ALIGN_TOP_LEFT, 0, 28);
 
     // 创建IP地址标签（第4行，左对齐）
@@ -185,6 +197,9 @@ esp_err_t oled_ui_create_status_screen(void)
     }
     lv_label_set_text(label_ip, "IP: ---.---.---.---");
     lv_obj_set_style_text_font(label_ip, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_ip, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_opa(label_ip, LV_OPA_COVER, 0);
+    ESP_LOGI(TAG, "IP标签创建 - 地址: %p", label_ip);
     lv_obj_align(label_ip, LV_ALIGN_TOP_LEFT, 0, 42);
 
     // 创建运行时间标签（第5行，左对齐）
@@ -203,6 +218,9 @@ esp_err_t oled_ui_create_status_screen(void)
     }
     lv_label_set_text(label_uptime, "Up: 00:00:00");
     lv_obj_set_style_text_font(label_uptime, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(label_uptime, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_style_text_opa(label_uptime, LV_OPA_COVER, 0);
+    ESP_LOGI(TAG, "运行时间标签创建 - 地址: %p", label_uptime);
     lv_obj_align(label_uptime, LV_ALIGN_TOP_LEFT, 0, 56);
 
     // 标记UI已创建
@@ -211,6 +229,11 @@ esp_err_t oled_ui_create_status_screen(void)
     
     // 加载状态屏幕
     lv_disp_load_scr(screen_status);
+
+    // 强制刷新显示以确保UI立即显示
+    ESP_LOGI(TAG, "触发LVGL强制刷新以显示UI");
+    lv_obj_invalidate(screen_status);  // 标记屏幕对象为无效，触发重绘
+    lv_refr_now(disp);  // 传入正确的显示器对象
 
     ESP_LOGI(TAG, "状态显示UI创建成功");
     return ESP_OK;
