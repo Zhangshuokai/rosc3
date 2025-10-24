@@ -1,12 +1,17 @@
 /**
  * @file diagnostic_example.c
  * @brief 诊断服务模块使用示例
- * @version 1.0
+ * @version 2.0
  * @date 2025-10-23
  * @author 嵌入式开发组
- * 
- * 本文件演示如何使用诊断服务模块发布系统状态信息
- * 
+ *
+ * 本文件演示如何使用诊断服务模块的所有功能：
+ * - 发布诊断消息
+ * - 记录事件日志
+ * - 生成诊断报告
+ * - 获取日志历史
+ * - 注册异常处理器
+ *
  * @copyright Copyright (c) 2025 ROSC3 Project
  */
 
@@ -209,4 +214,193 @@ void diagnostic_advanced_example(void) {
     
     // 发布诊断
     diagnostic_publish(level, message);
+}
+
+/**
+ * @brief 日志记录示例
+ */
+void diagnostic_log_example(void) {
+    ESP_LOGI(TAG, "=== Diagnostic Log Example ===");
+    
+    // 初始化诊断服务（假设已初始化）
+    // diagnostic_init("test_node");
+    
+    // 1. 记录不同级别的日志
+    diagnostic_log(ESP_LOG_INFO, "CHASSIS", "Motor started");
+    diagnostic_log(ESP_LOG_INFO, "CHASSIS", "Speed set to %d RPM", 1500);
+    diagnostic_log(ESP_LOG_WARN, "CHASSIS", "Temperature high: %d°C", 75);
+    diagnostic_log(ESP_LOG_ERROR, "CHASSIS", "Motor stalled!");
+    
+    // 2. 记录一些测试日志
+    for (int i = 0; i < 5; i++) {
+        diagnostic_log(ESP_LOG_INFO, "TEST", "Test log entry %d", i);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    
+    // 3. 获取日志历史
+    diagnostic_log_entry_t logs[10];
+    size_t count = diagnostic_get_log_history(logs, 10);
+    
+    ESP_LOGI(TAG, "Retrieved %zu log entries:", count);
+    for (size_t i = 0; i < count; i++) {
+        const char *level_str = "UNKNOWN";
+        switch (logs[i].level) {
+            case ESP_LOG_ERROR:   level_str = "ERROR"; break;
+            case ESP_LOG_WARN:    level_str = "WARN"; break;
+            case ESP_LOG_INFO:    level_str = "INFO"; break;
+            case ESP_LOG_DEBUG:   level_str = "DEBUG"; break;
+            case ESP_LOG_VERBOSE: level_str = "VERBOSE"; break;
+        }
+        
+        ESP_LOGI(TAG, "[%s] %s: %s (ts: %lu)",
+                 level_str,
+                 logs[i].tag,
+                 logs[i].message,
+                 logs[i].timestamp);
+    }
+    
+    // 4. 清空日志（可选）
+    // diagnostic_clear_log_history();
+}
+
+/**
+ * @brief 诊断报告生成示例
+ */
+void diagnostic_report_example(void) {
+    ESP_LOGI(TAG, "=== Diagnostic Report Example ===");
+    
+    // 先记录一些测试日志
+    diagnostic_log(ESP_LOG_INFO, "SYSTEM", "System initialized");
+    diagnostic_log(ESP_LOG_WARN, "WIFI", "Signal weak: -78 dBm");
+    diagnostic_log(ESP_LOG_ERROR, "ROS", "Connection lost");
+    
+    // 生成诊断报告
+    char report[2048];
+    size_t len = diagnostic_generate_report(report, sizeof(report));
+    
+    ESP_LOGI(TAG, "Generated report (%zu bytes):", len);
+    printf("\n%s\n", report);
+    
+    // 报告可以通过多种方式使用：
+    // 1. 打印到控制台（如上）
+    // 2. 保存到文件
+    // 3. 通过ROS发布
+    // 4. 通过HTTP上传到服务器
+}
+
+/**
+ * @brief 异常处理器示例
+ */
+void my_exception_handler(const char *exception_type,
+                          const char *message,
+                          void *context) {
+    ESP_LOGE("EXCEPTION", "=== EXCEPTION DETECTED ===");
+    ESP_LOGE("EXCEPTION", "Type: %s", exception_type);
+    ESP_LOGE("EXCEPTION", "Message: %s", message);
+    
+    // 记录异常日志
+    diagnostic_log(ESP_LOG_ERROR, "EXCEPTION",
+                   "%s: %s", exception_type, message);
+    
+    // 生成崩溃报告
+    char report[2048];
+    diagnostic_generate_report(report, sizeof(report));
+    
+    ESP_LOGE("EXCEPTION", "Crash Report:\n%s", report);
+    
+    // 实际应用中可以：
+    // - 保存报告到Flash
+    // - 通过网络发送到服务器
+    // - 触发系统重启
+}
+
+/**
+ * @brief 异常处理器注册示例
+ */
+void diagnostic_exception_handler_example(void) {
+    ESP_LOGI(TAG, "=== Exception Handler Example ===");
+    
+    // 注册异常处理器
+    esp_err_t ret = diagnostic_register_exception_handler(my_exception_handler);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "Exception handler registered successfully");
+    } else {
+        ESP_LOGE(TAG, "Failed to register exception handler: %s",
+                 esp_err_to_name(ret));
+    }
+    
+    // 模拟异常（实际使用中由系统自动触发）
+    // my_exception_handler("TEST_EXCEPTION", "This is a test exception", NULL);
+}
+
+/**
+ * @brief 综合示例 - 完整的诊断流程
+ */
+void diagnostic_comprehensive_example(void) {
+    ESP_LOGI(TAG, "=== Comprehensive Diagnostic Example ===");
+    
+    // 1. 初始化（假设WiFi和ROS已连接）
+    // diagnostic_init("chassis_node_01");
+    
+    // 2. 注册异常处理器
+    diagnostic_register_exception_handler(my_exception_handler);
+    
+    // 3. 启动系统监控（每5秒）
+    // diagnostic_start_monitor(5000);
+    
+    // 4. 在应用程序中使用日志记录
+    diagnostic_log(ESP_LOG_INFO, "APP", "Application started");
+    
+    // 模拟一些操作
+    for (int i = 0; i < 3; i++) {
+        diagnostic_log(ESP_LOG_INFO, "APP", "Processing iteration %d", i);
+        
+        // 模拟警告
+        if (i == 1) {
+            diagnostic_log(ESP_LOG_WARN, "APP", "Resource usage high");
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+    
+    // 5. 定期发布自定义诊断信息
+    diagnostic_clear_kv();
+    diagnostic_add_kv("Operation", "Normal");
+    diagnostic_add_kv("Cycles", "1234");
+    diagnostic_add_kv("Errors", "0");
+    diagnostic_publish(DIAGNOSTIC_OK, "Application running normally");
+    
+    // 6. 需要时生成诊断报告
+    char report[2048];
+    diagnostic_generate_report(report, sizeof(report));
+    ESP_LOGI(TAG, "Full diagnostic report:\n%s", report);
+}
+
+/**
+ * @brief 所有示例的主入口
+ */
+void run_all_diagnostic_examples(void) {
+    ESP_LOGI(TAG, "\n\n");
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "  DIAGNOSTIC MODULE EXAMPLES");
+    ESP_LOGI(TAG, "========================================");
+    
+    // 等待系统稳定
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    
+    // 运行各个示例
+    diagnostic_log_example();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    diagnostic_report_example();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    diagnostic_exception_handler_example();
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    
+    diagnostic_comprehensive_example();
+    
+    ESP_LOGI(TAG, "========================================");
+    ESP_LOGI(TAG, "  ALL EXAMPLES COMPLETED");
+    ESP_LOGI(TAG, "========================================");
 }

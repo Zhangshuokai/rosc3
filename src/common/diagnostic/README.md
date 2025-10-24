@@ -12,6 +12,11 @@
 - ✅ 支持最多16个自定义键值对
 - ✅ 线程安全设计
 - ✅ 符合ROS 2 `diagnostic_msgs`规范
+- ✅ 环形缓冲区日志记录（最多100条）
+- ✅ 生成完整诊断报告
+- ✅ 远程日志发布（`/diagnostics/logs`话题）
+- ✅ 异常处理器注册
+- ✅ CPU和内存监控
 
 ## 文件说明
 
@@ -242,8 +247,9 @@ string value            # 值（最大63字符）
 ## 性能考虑
 
 - **CPU占用**: 发布操作约占用<1% CPU（1Hz频率）
-- **内存占用**: 约2KB（包括消息缓冲区）
+- **内存占用**: 约12KB（包括消息缓冲区和日志缓冲区）
 - **建议频率**: 1Hz（每秒1次）
+- **日志缓冲区**: 100条 × 176字节 = 17.6KB
 
 ## 调试建议
 
@@ -305,10 +311,112 @@ void test_diagnostic(void) {
 3. 订阅`/diagnostics`话题
 4. 验证消息接收和内容正确性
 
+## 日志记录示例
+
+### 基本日志记录
+
+```c
+// 记录不同级别的日志
+diagnostic_log(ESP_LOG_INFO, "CHASSIS", "Motor started");
+diagnostic_log(ESP_LOG_WARN, "CHASSIS", "Temperature high: %d°C", temp);
+diagnostic_log(ESP_LOG_ERROR, "CHASSIS", "Motor stalled!");
+```
+
+### 获取日志历史
+
+```c
+diagnostic_log_entry_t logs[10];
+size_t count = diagnostic_get_log_history(logs, 10);
+
+for (size_t i = 0; i < count; i++) {
+    printf("[%s] %s: %s (timestamp: %lu)\n",
+           log_level_str(logs[i].level),
+           logs[i].tag,
+           logs[i].message,
+           logs[i].timestamp);
+}
+```
+
+### 生成诊断报告
+
+```c
+char report[2048];
+size_t len = diagnostic_generate_report(report, sizeof(report));
+printf("%s\n", report);
+
+// 或者通过ROS发布报告
+std_msgs__msg__String report_msg;
+report_msg.data.data = report;
+report_msg.data.size = len;
+ros_comm_publish(&report_publisher, &report_msg);
+```
+
+### 注册异常处理器
+
+```c
+void my_exception_handler(const char *exception_type,
+                          const char *message,
+                          void *context) {
+    ESP_LOGE("EXCEPTION", "Type: %s, Message: %s",
+             exception_type, message);
+    
+    // 生成诊断报告
+    char report[2048];
+    diagnostic_generate_report(report, sizeof(report));
+    
+    // 保存到Flash或发送到服务器
+    save_crash_report(report);
+}
+
+// 注册处理器
+diagnostic_register_exception_handler(my_exception_handler);
+```
+
+## 诊断报告格式
+
+完整的诊断报告包含以下部分：
+
+1. **系统信息**
+   - 运行时间
+   - 空闲堆内存和最小堆内存
+   - CPU使用率
+   - 重启原因
+
+2. **网络状态**
+   - WiFi连接状态和信号强度
+   - IP地址
+
+3. **ROS状态**
+   - ROS Agent连接状态
+
+4. **最近错误**
+   - 最近5条ERROR/WARN级别日志
+   - 包含时间戳和内容
+
+5. **日志历史**
+   - 最近10条所有级别日志
+
+## 远程日志功能
+
+系统会自动将ERROR和WARN级别的日志发布到`/diagnostics/logs`话题：
+
+```bash
+# 订阅远程日志
+ros2 topic echo /diagnostics/logs
+
+# 查看话题信息
+ros2 topic info /diagnostics/logs
+```
+
+**限流机制**：
+- 每秒最多发布10条日志
+- 避免网络拥塞
+- 只发布ERROR和WARN级别
+
 ## 参考文档
 
 - [ROS 2 diagnostic_msgs文档](http://docs.ros.org/en/humble/p/diagnostic_msgs/)
-- [任务分解文档](../../../任务分解-v2/任务分解-通用基础模块.md) - TASK-COMMON-014
+- [任务分解文档](../../../任务分解-v2/任务分解-通用基础模块.md) - TASK-COMMON-014/015/016
 - [开发规范](../../../开发架构文档/开发规范.md)
 - [ROS接口定义](../../../需求分析/ROS接口定义文档.md)
 

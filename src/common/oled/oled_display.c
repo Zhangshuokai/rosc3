@@ -8,12 +8,12 @@
  */
 
 #include "oled_display.h"
+#include "common/i2c_manager/i2c_manager.h"
 #include "esp_log.h"
 #include "esp_check.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
-#include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
@@ -67,12 +67,6 @@ static void lvgl_flush_cb(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_col
 static void lvgl_timer_task(void *arg);
 
 /**
- * @brief 初始化I2C总线
- * @return ESP_OK: 成功, ESP_FAIL: 失败
- */
-static esp_err_t init_i2c_bus(void);
-
-/**
  * @brief 初始化LCD面板
  * @return ESP_OK: 成功, ESP_FAIL: 失败
  */
@@ -82,34 +76,27 @@ static esp_err_t init_lcd_panel(void);
    内部函数实现
  *====================*/
 
-static esp_err_t init_i2c_bus(void)
-{
-    ESP_LOGI(TAG, "初始化I2C总线 (SDA: GPIO%d, SCL: GPIO%d, 频率: %d Hz)",
-             OLED_I2C_SDA_PIN, OLED_I2C_SCL_PIN, OLED_I2C_FREQ_HZ);
-
-    i2c_config_t i2c_conf = {
-        .mode = I2C_MODE_MASTER,
-        .sda_io_num = OLED_I2C_SDA_PIN,
-        .scl_io_num = OLED_I2C_SCL_PIN,
-        .sda_pullup_en = GPIO_PULLUP_ENABLE,
-        .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        .master.clk_speed = OLED_I2C_FREQ_HZ,
-    };
-
-    ESP_RETURN_ON_ERROR(i2c_param_config(I2C_NUM_0, &i2c_conf), TAG, "I2C参数配置失败");
-    ESP_RETURN_ON_ERROR(i2c_driver_install(I2C_NUM_0, I2C_MODE_MASTER, 0, 0, 0), TAG, "I2C驱动安装失败");
-
-    ESP_LOGI(TAG, "I2C总线初始化成功");
-    return ESP_OK;
-}
-
 static esp_err_t init_lcd_panel(void)
 {
     ESP_LOGI(TAG, "初始化LCD面板 (SSD1306 %dx%d @ 0x%02X)", OLED_WIDTH, OLED_HEIGHT, OLED_I2C_ADDR);
 
-    // 创建I2C面板IO
+    // 1. 获取I2C总线句柄（由I2C管理器提供）
+    i2c_master_bus_handle_t i2c_bus = i2c_manager_get_bus_handle();
+    if (i2c_bus == NULL) {
+        ESP_LOGE(TAG, "I2C管理器未初始化");
+        return ESP_FAIL;
+    }
+
+    // 2. 注册OLED设备
+    ESP_RETURN_ON_ERROR(
+        i2c_manager_register_device(OLED_I2C_ADDR, "SSD1306"),
+        TAG, "注册OLED设备失败"
+    );
+
+    // 3. 创建I2C面板IO（使用新驱动API）
     esp_lcd_panel_io_i2c_config_t io_config = {
         .dev_addr = OLED_I2C_ADDR,
+        .scl_speed_hz = OLED_I2C_FREQ_HZ,  // 添加 SCL 频率配置
         .control_phase_bytes = 1,
         .dc_bit_offset = 6,
         .lcd_cmd_bits = 8,
@@ -117,7 +104,7 @@ static esp_err_t init_lcd_panel(void)
     };
 
     ESP_RETURN_ON_ERROR(
-        esp_lcd_new_panel_io_i2c((esp_lcd_i2c_bus_handle_t)I2C_NUM_0, &io_config, &s_io_handle),
+        esp_lcd_new_panel_io_i2c(i2c_bus, &io_config, &s_io_handle),
         TAG, "创建LCD IO失败"
     );
 
@@ -194,21 +181,14 @@ esp_err_t oled_display_init(void)
 
     esp_err_t ret;
 
-    // 1. 初始化I2C总线
-    ret = init_i2c_bus();
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "I2C总线初始化失败");
-        return ret;
-    }
-
-    // 2. 初始化LCD面板
+    // 1. 初始化LCD面板（I2C总线由I2C管理器统一管理）
     ret = init_lcd_panel();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "LCD面板初始化失败");
-        goto err_cleanup_i2c;
+        return ret;
     }
 
-    // 3. 初始化LVGL
+    // 2. 初始化LVGL
     ESP_LOGI(TAG, "初始化LVGL (版本: %d.%d.%d)", 
              lv_version_major(), lv_version_minor(), lv_version_patch());
     lv_init();
@@ -291,9 +271,6 @@ err_cleanup_panel:
         esp_lcd_panel_io_del(s_io_handle);
         s_io_handle = NULL;
     }
-
-err_cleanup_i2c:
-    i2c_driver_delete(I2C_NUM_0);
 
     ESP_LOGE(TAG, "OLED显示模块初始化失败");
     return ret;

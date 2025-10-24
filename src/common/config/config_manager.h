@@ -42,6 +42,29 @@ extern "C" {
 #define CFG_KEY_ROS_DOMAIN_ID    "ros_domain"
 
 /**
+ * @brief 配置变更类型
+ */
+typedef enum {
+    CONFIG_CHANGE_TYPE_STR,      ///< 字符串类型配置变更
+    CONFIG_CHANGE_TYPE_INT,      ///< 整数类型配置变更
+} config_change_type_t;
+
+/**
+ * @brief 配置变更回调函数
+ *
+ * @param[in] key 变更的配置键
+ * @param[in] type 配置类型
+ * @param[in] value 新值指针（根据type转换为相应类型）
+ * @param[in] user_data 用户自定义数据
+ */
+typedef void (*config_change_callback_t)(
+    const char *key,
+    config_change_type_t type,
+    const void *value,
+    void *user_data
+);
+
+/**
  * @brief 节点配置结构体
  */
 typedef struct {
@@ -222,6 +245,150 @@ esp_err_t config_load(node_config_t *config);
  * @note 配置无效时会输出详细的错误日志
  */
 esp_err_t config_validate(const node_config_t *config);
+
+/**
+ * @brief 注册配置变更回调
+ *
+ * 注册一个回调函数，当配置发生变更时被调用。
+ * 支持注册多个回调函数，按注册顺序调用。
+ *
+ * @param[in] callback 回调函数指针
+ * @param[in] user_data 用户自定义数据，将传递给回调函数
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: callback为NULL
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *   - ESP_ERR_NO_MEM: 内存不足
+ *
+ * @note 此函数是线程安全的
+ * @note 回调函数在配置更新的上下文中执行，应避免耗时操作
+ */
+esp_err_t config_register_callback(
+    config_change_callback_t callback,
+    void *user_data
+);
+
+/**
+ * @brief 注销配置变更回调
+ *
+ * 从回调列表中移除指定的回调函数
+ *
+ * @param[in] callback 要注销的回调函数指针
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: callback为NULL
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *   - ESP_ERR_NOT_FOUND: 回调函数未注册
+ *
+ * @note 此函数是线程安全的
+ */
+esp_err_t config_unregister_callback(config_change_callback_t callback);
+
+/**
+ * @brief 更新配置并通知（字符串类型）
+ *
+ * 更新字符串类型配置值，并通知所有注册的回调函数。
+ * 配置立即生效（热更新），但不会自动保存到Flash。
+ *
+ * @param[in] key 配置键
+ * @param[in] value 新值
+ * @param[in] auto_save 是否自动保存到Flash
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: 参数无效
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *
+ * @note 此函数是线程安全的
+ * @note 部分配置（如WiFi SSID）需要重启才能完全生效
+ */
+esp_err_t config_update_str_and_notify(
+    const char *key,
+    const char *value,
+    bool auto_save
+);
+
+/**
+ * @brief 更新配置并通知（整数类型）
+ *
+ * 更新整数类型配置值，并通知所有注册的回调函数。
+ * 配置立即生效（热更新），但不会自动保存到Flash。
+ *
+ * @param[in] key 配置键
+ * @param[in] value 新值
+ * @param[in] auto_save 是否自动保存到Flash
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: 参数无效
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *
+ * @note 此函数是线程安全的
+ * @note 日志级别等配置支持立即生效
+ */
+esp_err_t config_update_int_and_notify(
+    const char *key,
+    int32_t value,
+    bool auto_save
+);
+
+/**
+ * @brief 备份当前配置
+ *
+ * 将当前配置备份到指定的命名空间。
+ * 可用于在更新配置前创建备份点。
+ *
+ * @param[in] backup_namespace 备份命名空间名称（如"rosc3_bak"）
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: backup_namespace为NULL
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *   - ESP_FAIL: 备份失败
+ *
+ * @note 此函数是线程安全的
+ * @warning 会覆盖同名备份命名空间中的数据
+ */
+esp_err_t config_backup(const char *backup_namespace);
+
+/**
+ * @brief 从备份恢复配置
+ *
+ * 从指定的备份命名空间恢复配置到当前命名空间。
+ * 恢复后自动保存到Flash。
+ *
+ * @param[in] backup_namespace 备份命名空间名称
+ *
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: backup_namespace为NULL
+ *   - ESP_ERR_INVALID_STATE: 配置管理器未初始化
+ *   - ESP_ERR_NOT_FOUND: 备份不存在
+ *   - ESP_FAIL: 恢复失败
+ *
+ * @note 此函数是线程安全的
+ * @warning 会覆盖当前配置
+ */
+esp_err_t config_restore(const char *backup_namespace);
+
+/**
+ * @brief 检查配置键是否支持热更新
+ *
+ * 某些配置（如日志级别）可以立即生效，
+ * 而某些配置（如WiFi SSID）需要重启。
+ *
+ * @param[in] key 配置键
+ *
+ * @return
+ *   - true: 支持热更新
+ *   - false: 需要重启
+ *
+ * @note 支持热更新的配置键：
+ *       - CFG_KEY_LOG_LEVEL
+ */
+bool config_is_hot_updatable(const char *key);
 
 #ifdef __cplusplus
 }

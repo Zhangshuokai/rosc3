@@ -16,9 +16,11 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_mac.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
@@ -26,6 +28,7 @@
 // Micro-ROS消息类型
 #include <diagnostic_msgs/msg/diagnostic_status.h>
 #include <diagnostic_msgs/msg/key_value.h>
+#include <std_msgs/msg/string.h>
 
 static const char *TAG = "DIAGNOSTIC";
 
@@ -40,6 +43,28 @@ typedef struct {
 } diagnostic_context_t;
 
 static diagnostic_context_t g_diag_ctx = {0};
+
+// 日志环形缓冲区
+typedef struct {
+    diagnostic_log_entry_t buffer[DIAGNOSTIC_LOG_HISTORY_SIZE]; ///< 日志缓冲区
+    size_t head;                            ///< 写入位置
+    size_t count;                           ///< 当前日志数量
+    SemaphoreHandle_t mutex;                ///< 互斥锁
+    rcl_publisher_t log_publisher;          ///< 远程日志发布者
+    bool log_publisher_initialized;         ///< 日志发布者初始化标志
+} log_buffer_t;
+
+static log_buffer_t g_log_buffer = {0};
+
+// 异常处理器
+#define MAX_EXCEPTION_HANDLERS  4
+typedef struct {
+    diagnostic_exception_handler_t handlers[MAX_EXCEPTION_HANDLERS];
+    size_t count;
+    SemaphoreHandle_t mutex;
+} exception_handler_list_t;
+
+static exception_handler_list_t g_exception_handlers = {0};
 
 // CPU使用率统计
 static uint32_t g_last_total_runtime = 0;
@@ -103,6 +128,28 @@ esp_err_t diagnostic_init(const char *node_name) {
         return ESP_ERR_NO_MEM;
     }
     
+    // 初始化日志缓冲区
+    memset(&g_log_buffer, 0, sizeof(log_buffer_t));
+    g_log_buffer.mutex = xSemaphoreCreateMutex();
+    if (g_log_buffer.mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create log buffer mutex");
+        vSemaphoreDelete(g_diag_ctx.mutex);
+        g_diag_ctx.mutex = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // 初始化异常处理器列表
+    memset(&g_exception_handlers, 0, sizeof(exception_handler_list_t));
+    g_exception_handlers.mutex = xSemaphoreCreateMutex();
+    if (g_exception_handlers.mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create exception handler mutex");
+        vSemaphoreDelete(g_diag_ctx.mutex);
+        vSemaphoreDelete(g_log_buffer.mutex);
+        g_diag_ctx.mutex = NULL;
+        g_log_buffer.mutex = NULL;
+        return ESP_ERR_NO_MEM;
+    }
+    
     // 初始化诊断数据
     memset(&g_diag_ctx.data, 0, sizeof(diagnostic_data_t));
     
@@ -135,6 +182,23 @@ esp_err_t diagnostic_init(const char *node_name) {
         vSemaphoreDelete(g_diag_ctx.mutex);
         g_diag_ctx.mutex = NULL;
         return ret;
+    }
+    
+    // 创建远程日志发布者（可选）
+    ret = ros_comm_create_publisher(
+        &g_log_buffer.log_publisher,
+        "/diagnostics/logs",
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+        &QOS_BEST_EFFORT
+    );
+    
+    if (ret == ESP_OK) {
+        g_log_buffer.log_publisher_initialized = true;
+        ESP_LOGI(TAG, "Remote log publisher created");
+    } else {
+        ESP_LOGW(TAG, "Failed to create remote log publisher (non-critical): %s",
+                 esp_err_to_name(ret));
+        g_log_buffer.log_publisher_initialized = false;
     }
     
     g_diag_ctx.is_initialized = true;
@@ -570,4 +634,342 @@ esp_err_t diagnostic_start_monitor(uint32_t interval_ms) {
     ESP_LOGI(TAG, "System monitor started with interval %lu ms", interval_ms);
     
     return ESP_OK;
+}
+
+/**
+ * @brief 日志级别转字符串
+ */
+static const char *log_level_to_str(esp_log_level_t level) {
+    switch (level) {
+        case ESP_LOG_ERROR:   return "ERROR";
+        case ESP_LOG_WARN:    return "WARN";
+        case ESP_LOG_INFO:    return "INFO";
+        case ESP_LOG_DEBUG:   return "DEBUG";
+        case ESP_LOG_VERBOSE: return "VERBOSE";
+        default:              return "UNKNOWN";
+    }
+}
+
+/**
+ * @brief 记录事件日志
+ */
+void diagnostic_log(esp_log_level_t level, const char *tag, 
+                    const char *format, ...) {
+    if (tag == NULL || format == NULL) {
+        return;
+    }
+    
+    // 如果日志缓冲区未初始化，直接使用ESP_LOG输出
+    if (g_log_buffer.mutex == NULL) {
+        va_list args;
+        va_start(args, format);
+        esp_log_writev(level, tag, format, args);
+        va_end(args);
+        return;
+    }
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(g_log_buffer.mutex, pdMS_TO_TICKS(100)) != pdTRUE) {
+        return;
+    }
+    
+    // 创建日志条目
+    diagnostic_log_entry_t *entry = &g_log_buffer.buffer[g_log_buffer.head];
+    
+    entry->level = level;
+    entry->timestamp = esp_log_timestamp();
+    
+    // 复制标签
+    strncpy(entry->tag, tag, sizeof(entry->tag) - 1);
+    entry->tag[sizeof(entry->tag) - 1] = '\0';
+    
+    // 格式化消息
+    va_list args;
+    va_start(args, format);
+    vsnprintf(entry->message, sizeof(entry->message), format, args);
+    va_end(args);
+    
+    // 更新环形缓冲区索引
+    g_log_buffer.head = (g_log_buffer.head + 1) % DIAGNOSTIC_LOG_HISTORY_SIZE;
+    if (g_log_buffer.count < DIAGNOSTIC_LOG_HISTORY_SIZE) {
+        g_log_buffer.count++;
+    }
+    
+    xSemaphoreGive(g_log_buffer.mutex);
+    
+    // 同时输出到ESP_LOG
+    va_start(args, format);
+    esp_log_writev(level, tag, format, args);
+    va_end(args);
+    
+    // 如果启用了远程日志发布，发布ERROR和WARN级别的日志
+    if (g_log_buffer.log_publisher_initialized && 
+        (level == ESP_LOG_ERROR || level == ESP_LOG_WARN)) {
+        
+        // 限流：每秒最多发布10条
+        static uint32_t last_publish_ms = 0;
+        static uint8_t publish_count = 0;
+        uint32_t now_ms = esp_log_timestamp();
+        
+        if (now_ms - last_publish_ms >= 1000) {
+            last_publish_ms = now_ms;
+            publish_count = 0;
+        }
+        
+        if (publish_count < 10) {
+            char log_msg[256];
+            snprintf(log_msg, sizeof(log_msg), "[%s] %s: %s",
+                     log_level_to_str(level), tag, entry->message);
+            
+            std_msgs__msg__String log_ros_msg;
+            log_ros_msg.data.data = log_msg;
+            log_ros_msg.data.size = strlen(log_msg);
+            log_ros_msg.data.capacity = log_ros_msg.data.size + 1;
+            
+            ros_comm_publish(&g_log_buffer.log_publisher, &log_ros_msg);
+            publish_count++;
+        }
+    }
+}
+
+/**
+ * @brief 生成诊断报告
+ */
+size_t diagnostic_generate_report(char *report, size_t max_len) {
+    if (report == NULL || max_len == 0) {
+        return 0;
+    }
+    
+    size_t offset = 0;
+    
+    // 标题
+    offset += snprintf(report + offset, max_len - offset,
+        "==========================================\n"
+        "ESP32-C3 DIAGNOSTIC REPORT\n"
+        "==========================================\n\n");
+    
+    // 系统信息
+    uint32_t uptime_sec = esp_log_timestamp() / 1000;
+    uint32_t free_heap = diagnostic_get_free_heap();
+    uint32_t min_heap = diagnostic_get_minimum_free_heap();
+    uint8_t cpu_usage = diagnostic_get_cpu_usage();
+    esp_reset_reason_t reset_reason = esp_reset_reason();
+    
+    offset += snprintf(report + offset, max_len - offset,
+        "SYSTEM INFORMATION\n"
+        "------------------------------------------\n"
+        "Uptime:              %lu seconds (%.1f min)\n"
+        "Free Heap:           %lu KB\n"
+        "Minimum Free Heap:   %lu KB\n"
+        "CPU Usage:           %u%%\n"
+        "Reset Reason:        ",
+        uptime_sec, uptime_sec / 60.0f,
+        free_heap / 1024, min_heap / 1024, cpu_usage);
+    
+    // 重启原因
+    const char *reset_reason_str = "Unknown";
+    switch (reset_reason) {
+        case ESP_RST_POWERON:   reset_reason_str = "Power-on Reset"; break;
+        case ESP_RST_SW:        reset_reason_str = "Software Reset"; break;
+        case ESP_RST_PANIC:     reset_reason_str = "Panic Reset"; break;
+        case ESP_RST_INT_WDT:   reset_reason_str = "Interrupt Watchdog"; break;
+        case ESP_RST_TASK_WDT:  reset_reason_str = "Task Watchdog"; break;
+        case ESP_RST_WDT:       reset_reason_str = "Watchdog Reset"; break;
+        case ESP_RST_DEEPSLEEP: reset_reason_str = "Deep Sleep Wake"; break;
+        case ESP_RST_BROWNOUT:  reset_reason_str = "Brownout Reset"; break;
+        default: break;
+    }
+    offset += snprintf(report + offset, max_len - offset, "%s\n\n", reset_reason_str);
+    
+    // 网络状态
+    offset += snprintf(report + offset, max_len - offset,
+        "NETWORK STATUS\n"
+        "------------------------------------------\n");
+    
+    wifi_status_t wifi_status;
+    if (wifi_manager_get_status(&wifi_status) == ESP_OK && 
+        wifi_status.state == WIFI_STATE_CONNECTED) {
+        offset += snprintf(report + offset, max_len - offset,
+            "WiFi:                Connected\n"
+            "RSSI:                %d dBm\n"
+            "IP Address:          " IPSTR "\n\n",
+            wifi_status.rssi, IP2STR(&wifi_status.ip));
+    } else {
+        offset += snprintf(report + offset, max_len - offset,
+            "WiFi:                Disconnected\n\n");
+    }
+    
+    // ROS状态
+    offset += snprintf(report + offset, max_len - offset,
+        "ROS STATUS\n"
+        "------------------------------------------\n"
+        "ROS Agent:           %s\n\n",
+        ros_comm_is_connected() ? "Connected" : "Disconnected");
+    
+    // 最近错误（从日志缓冲区提取ERROR级别的日志）
+    offset += snprintf(report + offset, max_len - offset,
+        "RECENT ERRORS (Last 5)\n"
+        "------------------------------------------\n");
+    
+    if (g_log_buffer.mutex != NULL && 
+        xSemaphoreTake(g_log_buffer.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        
+        size_t error_count = 0;
+        uint32_t now = esp_log_timestamp();
+        
+        // 从最新到最旧遍历日志
+        for (int i = 0; i < (int)g_log_buffer.count && error_count < 5; i++) {
+            int idx = (g_log_buffer.head - 1 - i + DIAGNOSTIC_LOG_HISTORY_SIZE) % 
+                      DIAGNOSTIC_LOG_HISTORY_SIZE;
+            diagnostic_log_entry_t *entry = &g_log_buffer.buffer[idx];
+            
+            if (entry->level == ESP_LOG_ERROR || entry->level == ESP_LOG_WARN) {
+                uint32_t age_sec = (now - entry->timestamp) / 1000;
+                offset += snprintf(report + offset, max_len - offset,
+                    "[%-5s] %-12s %s (%lus ago)\n",
+                    log_level_to_str(entry->level),
+                    entry->tag,
+                    entry->message,
+                    age_sec);
+                error_count++;
+            }
+        }
+        
+        if (error_count == 0) {
+            offset += snprintf(report + offset, max_len - offset,
+                "No recent errors\n");
+        }
+        
+        xSemaphoreGive(g_log_buffer.mutex);
+    }
+    
+    offset += snprintf(report + offset, max_len - offset, "\n");
+    
+    // 日志历史（最近10条）
+    offset += snprintf(report + offset, max_len - offset,
+        "LOG HISTORY (Last 10 entries)\n"
+        "------------------------------------------\n");
+    
+    if (g_log_buffer.mutex != NULL && 
+        xSemaphoreTake(g_log_buffer.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        
+        size_t log_count = g_log_buffer.count < 10 ? g_log_buffer.count : 10;
+        uint32_t now = esp_log_timestamp();
+        
+        for (size_t i = 0; i < log_count; i++) {
+            int idx = (g_log_buffer.head - log_count + i + DIAGNOSTIC_LOG_HISTORY_SIZE) % 
+                      DIAGNOSTIC_LOG_HISTORY_SIZE;
+            diagnostic_log_entry_t *entry = &g_log_buffer.buffer[idx];
+            
+            uint32_t age_sec = (now - entry->timestamp) / 1000;
+            offset += snprintf(report + offset, max_len - offset,
+                "[%-5s] %-12s %s (%lus ago)\n",
+                log_level_to_str(entry->level),
+                entry->tag,
+                entry->message,
+                age_sec);
+        }
+        
+        xSemaphoreGive(g_log_buffer.mutex);
+    }
+    
+    // 结尾
+    offset += snprintf(report + offset, max_len - offset,
+        "\n"
+        "==========================================\n"
+        "End of Report\n"
+        "==========================================\n");
+    
+    return offset;
+}
+
+/**
+ * @brief 注册异常处理器
+ */
+esp_err_t diagnostic_register_exception_handler(
+    diagnostic_exception_handler_t handler) {
+    
+    if (handler == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: handler is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (g_exception_handlers.mutex == NULL) {
+        ESP_LOGE(TAG, "Diagnostic service not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    if (xSemaphoreTake(g_exception_handlers.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire mutex");
+        return ESP_FAIL;
+    }
+    
+    if (g_exception_handlers.count >= MAX_EXCEPTION_HANDLERS) {
+        xSemaphoreGive(g_exception_handlers.mutex);
+        ESP_LOGE(TAG, "Exception handler list full (max %d)", MAX_EXCEPTION_HANDLERS);
+        return ESP_ERR_NO_MEM;
+    }
+    
+    g_exception_handlers.handlers[g_exception_handlers.count] = handler;
+    g_exception_handlers.count++;
+    
+    xSemaphoreGive(g_exception_handlers.mutex);
+    
+    ESP_LOGI(TAG, "Exception handler registered (total: %zu)", g_exception_handlers.count);
+    
+    return ESP_OK;
+}
+
+/**
+ * @brief 获取日志历史
+ */
+size_t diagnostic_get_log_history(diagnostic_log_entry_t *logs, 
+                                   size_t max_count) {
+    if (logs == NULL || max_count == 0) {
+        return 0;
+    }
+    
+    if (g_log_buffer.mutex == NULL) {
+        return 0;
+    }
+    
+    if (xSemaphoreTake(g_log_buffer.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire log buffer mutex");
+        return 0;
+    }
+    
+    size_t count = g_log_buffer.count < max_count ? g_log_buffer.count : max_count;
+    
+    // 复制日志（从最旧到最新）
+    for (size_t i = 0; i < count; i++) {
+        size_t idx = (g_log_buffer.head - g_log_buffer.count + i + 
+                     DIAGNOSTIC_LOG_HISTORY_SIZE) % DIAGNOSTIC_LOG_HISTORY_SIZE;
+        memcpy(&logs[i], &g_log_buffer.buffer[idx], sizeof(diagnostic_log_entry_t));
+    }
+    
+    xSemaphoreGive(g_log_buffer.mutex);
+    
+    return count;
+}
+
+/**
+ * @brief 清空日志历史
+ */
+void diagnostic_clear_log_history(void) {
+    if (g_log_buffer.mutex == NULL) {
+        return;
+    }
+    
+    if (xSemaphoreTake(g_log_buffer.mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire log buffer mutex");
+        return;
+    }
+    
+    memset(&g_log_buffer.buffer, 0, sizeof(g_log_buffer.buffer));
+    g_log_buffer.head = 0;
+    g_log_buffer.count = 0;
+    
+    xSemaphoreGive(g_log_buffer.mutex);
+    
+    ESP_LOGI(TAG, "Log history cleared");
 }

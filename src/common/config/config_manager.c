@@ -36,6 +36,19 @@
 static const char *TAG = "CONFIG_MGR";
 
 /*******************************************************************
+ * 回调链表节点结构
+ *******************************************************************/
+
+/**
+ * @brief 配置变更回调链表节点
+ */
+typedef struct config_callback_node {
+    config_change_callback_t callback;      ///< 回调函数
+    void *user_data;                        ///< 用户数据
+    struct config_callback_node *next;      ///< 下一个节点
+} config_callback_node_t;
+
+/*******************************************************************
  * 静态变量
  *******************************************************************/
 
@@ -53,6 +66,16 @@ static bool s_is_initialized = false;
  * @brief 互斥锁保护NVS操作
  */
 static SemaphoreHandle_t s_nvs_mutex = NULL;
+
+/**
+ * @brief 回调链表头
+ */
+static config_callback_node_t *s_callback_list = NULL;
+
+/**
+ * @brief 回调链表互斥锁
+ */
+static SemaphoreHandle_t s_callback_mutex = NULL;
 
 /*******************************************************************
  * 内部函数声明
@@ -73,10 +96,19 @@ esp_err_t config_manager_init(void) {
         return ESP_OK;
     }
     
-    // 创建互斥锁
+    // 创建NVS互斥锁
     s_nvs_mutex = xSemaphoreCreateMutex();
     if (s_nvs_mutex == NULL) {
-        ESP_LOGE(TAG, "Failed to create mutex");
+        ESP_LOGE(TAG, "Failed to create NVS mutex");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    // 创建回调互斥锁
+    s_callback_mutex = xSemaphoreCreateMutex();
+    if (s_callback_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create callback mutex");
+        vSemaphoreDelete(s_nvs_mutex);
+        s_nvs_mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
     
@@ -84,9 +116,14 @@ esp_err_t config_manager_init(void) {
     ret = nvs_init_and_open();
     if (ret != ESP_OK) {
         vSemaphoreDelete(s_nvs_mutex);
+        vSemaphoreDelete(s_callback_mutex);
         s_nvs_mutex = NULL;
+        s_callback_mutex = NULL;
         return ret;
     }
+    
+    // 初始化回调链表为空
+    s_callback_list = NULL;
     
     s_is_initialized = true;
     ESP_LOGI(TAG, "Config manager initialized successfully");
@@ -654,8 +691,8 @@ esp_err_t config_validate(const node_config_t *config) {
         return ESP_ERR_INVALID_ARG;
     }
     
-    // 端口范围验证
-    if (config->ros_agent_port < 1024 || config->ros_agent_port > 65535) {
+    // 端口范围验证（uint16_t最大值为65535，无需检查上限）
+    if (config->ros_agent_port < 1024) {
         ESP_LOGE(TAG, "Validation failed: ROS Agent port out of range "
                  "(1024-65535): %d", config->ros_agent_port);
         return ESP_ERR_INVALID_ARG;
@@ -754,4 +791,430 @@ static bool is_valid_ros_node_name(const char *name) {
     }
     
     return true;
+}
+
+/*******************************************************************
+ * 运行时配置更新功能实现 (TASK-COMMON-010)
+ *******************************************************************/
+
+/**
+ * @brief 通知所有注册的回调函数
+ * 
+ * @param[in] key 配置键
+ * @param[in] type 配置类型
+ * @param[in] value 新值指针
+ */
+static void notify_callbacks(const char *key, config_change_type_t type, const void *value) {
+    if (s_callback_mutex == NULL) {
+        return;
+    }
+    
+    // 获取回调互斥锁
+    if (xSemaphoreTake(s_callback_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire callback mutex");
+        return;
+    }
+    
+    // 遍历回调链表
+    config_callback_node_t *node = s_callback_list;
+    while (node != NULL) {
+        if (node->callback != NULL) {
+            node->callback(key, type, value, node->user_data);
+        }
+        node = node->next;
+    }
+    
+    // 释放互斥锁
+    xSemaphoreGive(s_callback_mutex);
+}
+
+esp_err_t config_register_callback(
+    config_change_callback_t callback,
+    void *user_data
+) {
+    // 参数检查
+    if (callback == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: callback is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // 分配新节点
+    config_callback_node_t *new_node = (config_callback_node_t *)malloc(sizeof(config_callback_node_t));
+    if (new_node == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate callback node");
+        return ESP_ERR_NO_MEM;
+    }
+    
+    new_node->callback = callback;
+    new_node->user_data = user_data;
+    new_node->next = NULL;
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(s_callback_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire callback mutex");
+        free(new_node);
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // 添加到链表头部
+    new_node->next = s_callback_list;
+    s_callback_list = new_node;
+    
+    // 释放互斥锁
+    xSemaphoreGive(s_callback_mutex);
+    
+    ESP_LOGI(TAG, "Callback registered successfully");
+    return ESP_OK;
+}
+
+esp_err_t config_unregister_callback(config_change_callback_t callback) {
+    // 参数检查
+    if (callback == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: callback is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(s_callback_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire callback mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // 在链表中查找并删除
+    config_callback_node_t **pp = &s_callback_list;
+    config_callback_node_t *node;
+    bool found = false;
+    
+    while ((node = *pp) != NULL) {
+        if (node->callback == callback) {
+            *pp = node->next;
+            free(node);
+            found = true;
+            break;
+        }
+        pp = &node->next;
+    }
+    
+    // 释放互斥锁
+    xSemaphoreGive(s_callback_mutex);
+    
+    if (!found) {
+        ESP_LOGW(TAG, "Callback not found");
+        return ESP_ERR_NOT_FOUND;
+    }
+    
+    ESP_LOGI(TAG, "Callback unregistered successfully");
+    return ESP_OK;
+}
+
+esp_err_t config_update_str_and_notify(
+    const char *key,
+    const char *value,
+    bool auto_save
+) {
+    esp_err_t ret;
+    
+    // 参数检查
+    if (key == NULL || value == NULL) {
+        ESP_LOGE(TAG, "Invalid arguments");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // 更新配置
+    ret = config_set_str(key, value);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update config: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // 自动保存（如果需要）
+    if (auto_save) {
+        ret = config_save();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to auto-save config: %s", esp_err_to_name(ret));
+        }
+    }
+    
+    // 通知回调
+    notify_callbacks(key, CONFIG_CHANGE_TYPE_STR, value);
+    
+    // 检查是否支持热更新
+    if (config_is_hot_updatable(key)) {
+        ESP_LOGI(TAG, "Config updated (hot): %s = %s", key, value);
+    } else {
+        ESP_LOGW(TAG, "Config updated (requires restart): %s = %s", key, value);
+    }
+    
+    return ESP_OK;
+}
+
+esp_err_t config_update_int_and_notify(
+    const char *key,
+    int32_t value,
+    bool auto_save
+) {
+    esp_err_t ret;
+    
+    // 参数检查
+    if (key == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: key is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    // 更新配置
+    ret = config_set_int(key, value);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to update config: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    
+    // 自动保存（如果需要）
+    if (auto_save) {
+        ret = config_save();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to auto-save config: %s", esp_err_to_name(ret));
+        }
+    }
+    
+    // 通知回调
+    notify_callbacks(key, CONFIG_CHANGE_TYPE_INT, &value);
+    
+    // 检查是否支持热更新
+    if (config_is_hot_updatable(key)) {
+        ESP_LOGI(TAG, "Config updated (hot): %s = %ld", key, (long)value);
+        
+        // 热更新：日志级别立即生效
+        if (strcmp(key, CFG_KEY_LOG_LEVEL) == 0) {
+            esp_log_level_set("*", (esp_log_level_t)value);
+            ESP_LOGI(TAG, "Log level changed to %ld", (long)value);
+        }
+    } else {
+        ESP_LOGW(TAG, "Config updated (requires restart): %s = %ld", key, (long)value);
+    }
+    
+    return ESP_OK;
+}
+
+esp_err_t config_backup(const char *backup_namespace) {
+    esp_err_t ret;
+    nvs_handle_t backup_handle = 0;
+    nvs_iterator_t it = NULL;
+    
+    // 参数检查
+    if (backup_namespace == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: backup_namespace is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Backing up configuration to '%s'", backup_namespace);
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(s_nvs_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // 打开备份命名空间
+    ret = nvs_open(backup_namespace, NVS_READWRITE, &backup_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open backup namespace: %s", esp_err_to_name(ret));
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    // 擦除备份命名空间（确保干净）
+    ret = nvs_erase_all(backup_handle);
+    if (ret != ESP_OK && ret != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGE(TAG, "Failed to erase backup namespace: %s", esp_err_to_name(ret));
+        nvs_close(backup_handle);
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    // 遍历当前命名空间的所有键值对
+    ret = nvs_entry_find(NVS_DEFAULT_PART_NAME, CONFIG_NAMESPACE, NVS_TYPE_ANY, &it);
+    while (ret == ESP_OK && it != NULL) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+        
+        // 根据类型复制键值对
+        if (info.type == NVS_TYPE_STR) {
+            size_t len = 0;
+            ret = nvs_get_str(s_nvs_handle, info.key, NULL, &len);
+            if (ret == ESP_OK && len > 0) {
+                char *value = (char *)malloc(len);
+                if (value != NULL) {
+                    ret = nvs_get_str(s_nvs_handle, info.key, value, &len);
+                    if (ret == ESP_OK) {
+                        nvs_set_str(backup_handle, info.key, value);
+                    }
+                    free(value);
+                }
+            }
+        } else if (info.type == NVS_TYPE_I32) {
+            int32_t value;
+            ret = nvs_get_i32(s_nvs_handle, info.key, &value);
+            if (ret == ESP_OK) {
+                nvs_set_i32(backup_handle, info.key, value);
+            }
+        }
+        
+        ret = nvs_entry_next(&it);
+    }
+    
+    if (it != NULL) {
+        nvs_release_iterator(it);
+    }
+    
+    // 提交备份
+    ret = nvs_commit(backup_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit backup: %s", esp_err_to_name(ret));
+        nvs_close(backup_handle);
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    nvs_close(backup_handle);
+    xSemaphoreGive(s_nvs_mutex);
+    
+    ESP_LOGI(TAG, "Configuration backed up successfully to '%s'", backup_namespace);
+    return ESP_OK;
+}
+
+esp_err_t config_restore(const char *backup_namespace) {
+    esp_err_t ret;
+    nvs_handle_t backup_handle = 0;
+    nvs_iterator_t it = NULL;
+    
+    // 参数检查
+    if (backup_namespace == NULL) {
+        ESP_LOGE(TAG, "Invalid argument: backup_namespace is NULL");
+        return ESP_ERR_INVALID_ARG;
+    }
+    
+    if (!s_is_initialized) {
+        ESP_LOGE(TAG, "Config manager not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    
+    ESP_LOGI(TAG, "Restoring configuration from '%s'", backup_namespace);
+    
+    // 获取互斥锁
+    if (xSemaphoreTake(s_nvs_mutex, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to acquire mutex");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // 打开备份命名空间
+    ret = nvs_open(backup_namespace, NVS_READONLY, &backup_handle);
+    if (ret != ESP_OK) {
+        if (ret == ESP_ERR_NVS_NOT_FOUND) {
+            ESP_LOGE(TAG, "Backup namespace '%s' not found", backup_namespace);
+        } else {
+            ESP_LOGE(TAG, "Failed to open backup namespace: %s", esp_err_to_name(ret));
+        }
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    // 擦除当前配置
+    ret = nvs_erase_all(s_nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to erase current config: %s", esp_err_to_name(ret));
+        nvs_close(backup_handle);
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    // 遍历备份命名空间的所有键值对
+    ret = nvs_entry_find(NVS_DEFAULT_PART_NAME, backup_namespace, NVS_TYPE_ANY, &it);
+    while (ret == ESP_OK && it != NULL) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+        
+        // 根据类型复制键值对
+        if (info.type == NVS_TYPE_STR) {
+            size_t len = 0;
+            ret = nvs_get_str(backup_handle, info.key, NULL, &len);
+            if (ret == ESP_OK && len > 0) {
+                char *value = (char *)malloc(len);
+                if (value != NULL) {
+                    ret = nvs_get_str(backup_handle, info.key, value, &len);
+                    if (ret == ESP_OK) {
+                        nvs_set_str(s_nvs_handle, info.key, value);
+                    }
+                    free(value);
+                }
+            }
+        } else if (info.type == NVS_TYPE_I32) {
+            int32_t value;
+            ret = nvs_get_i32(backup_handle, info.key, &value);
+            if (ret == ESP_OK) {
+                nvs_set_i32(s_nvs_handle, info.key, value);
+            }
+        }
+        
+        ret = nvs_entry_next(&it);
+    }
+    
+    if (it != NULL) {
+        nvs_release_iterator(it);
+    }
+    
+    // 提交恢复的配置
+    ret = nvs_commit(s_nvs_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit restored config: %s", esp_err_to_name(ret));
+        nvs_close(backup_handle);
+        xSemaphoreGive(s_nvs_mutex);
+        return ret;
+    }
+    
+    nvs_close(backup_handle);
+    xSemaphoreGive(s_nvs_mutex);
+    
+    ESP_LOGI(TAG, "Configuration restored successfully from '%s'", backup_namespace);
+    ESP_LOGW(TAG, "Please restart the device for all changes to take effect");
+    
+    return ESP_OK;
+}
+
+bool config_is_hot_updatable(const char *key) {
+    if (key == NULL) {
+        return false;
+    }
+    
+    // 支持热更新的配置项
+    if (strcmp(key, CFG_KEY_LOG_LEVEL) == 0) {
+        return true;
+    }
+    
+    // 其他配置需要重启
+    return false;
 }

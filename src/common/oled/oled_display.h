@@ -55,13 +55,13 @@ extern "C" {
  *====================*/
 
 #ifndef OLED_I2C_SDA_PIN
-    /** @brief I2C SDA引脚（ESP32-C3使用GPIO9） */
-    #define OLED_I2C_SDA_PIN    GPIO_NUM_9
+    /** @brief I2C SDA引脚（ESP32-C3使用GPIO5） */
+    #define OLED_I2C_SDA_PIN    GPIO_NUM_5
 #endif
 
 #ifndef OLED_I2C_SCL_PIN
-    /** @brief I2C SCL引脚（ESP32-C3使用GPIO8） */
-    #define OLED_I2C_SCL_PIN    GPIO_NUM_8
+    /** @brief I2C SCL引脚（ESP32-C3使用GPIO6） */
+    #define OLED_I2C_SCL_PIN    GPIO_NUM_6
 #endif
 
 /*====================

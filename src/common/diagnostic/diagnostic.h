@@ -16,6 +16,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -45,6 +48,21 @@ extern "C" {
 #define DIAGNOSTIC_MAX_KV_PAIRS  16
 
 /**
+ * @brief 日志历史缓冲区大小
+ */
+#define DIAGNOSTIC_LOG_HISTORY_SIZE  100
+
+/**
+ * @brief 日志消息最大长度
+ */
+#define DIAGNOSTIC_LOG_MESSAGE_MAX  128
+
+/**
+ * @brief 日志标签最大长度
+ */
+#define DIAGNOSTIC_LOG_TAG_MAX  16
+
+/**
  * @brief 键值对结构体
  */
 typedef struct {
@@ -63,6 +81,51 @@ typedef struct {
     diagnostic_kv_t kv[DIAGNOSTIC_MAX_KV_PAIRS];  ///< 键值对列表
     size_t kv_count;                        ///< 键值对数量
 } diagnostic_data_t;
+
+/**
+ * @brief 日志条目结构
+ */
+typedef struct {
+    esp_log_level_t level;              ///< 日志级别
+    char tag[DIAGNOSTIC_LOG_TAG_MAX];   ///< 日志标签
+    char message[DIAGNOSTIC_LOG_MESSAGE_MAX]; ///< 日志消息
+    uint32_t timestamp;                 ///< 时间戳（毫秒）
+} diagnostic_log_entry_t;
+
+/**
+ * @brief 异常处理函数类型
+ */
+typedef void (*diagnostic_exception_handler_t)(
+    const char *exception_type,
+    const char *message,
+    void *context
+);
+
+/**
+ * @brief 诊断报告结构
+ */
+typedef struct {
+    // 系统信息
+    uint32_t uptime_sec;                ///< 运行时间（秒）
+    uint32_t free_heap;                 ///< 空闲堆内存（字节）
+    uint32_t minimum_free_heap;         ///< 最小堆内存（字节）
+    uint8_t cpu_usage;                  ///< CPU使用率（%）
+    
+    // WiFi状态
+    bool wifi_connected;                ///< WiFi连接状态
+    int8_t wifi_rssi;                   ///< WiFi信号强度（dBm）
+    char wifi_ip[16];                   ///< IP地址
+    
+    // ROS状态
+    bool ros_connected;                 ///< ROS连接状态
+    
+    // 最近错误
+    diagnostic_log_entry_t recent_errors[5]; ///< 最近5条错误日志
+    size_t error_count;                 ///< 错误数量
+    
+    // 重启原因
+    esp_reset_reason_t reset_reason;    ///< 重启原因
+} diagnostic_report_t;
 
 /**
  * @brief 初始化诊断服务
@@ -224,6 +287,92 @@ uint32_t diagnostic_get_task_high_water_mark(TaskHandle_t task_handle);
  * @see diagnostic_init()
  */
 esp_err_t diagnostic_start_monitor(uint32_t interval_ms);
+
+/**
+ * @brief 记录事件日志
+ *
+ * 将日志记录到环形缓冲区中，自动包含时间戳。
+ * 可作为ESP_LOGx的替代或补充使用。
+ *
+ * @param[in] level 日志级别（ESP_LOG_ERROR/WARN/INFO/DEBUG/VERBOSE）
+ * @param[in] tag 日志标签，不能为NULL，最大长度15字符
+ * @param[in] format 格式化字符串
+ * @param[in] ... 可变参数
+ *
+ * @note 此函数是线程安全的
+ * @note 日志存储在环形缓冲区中（最多100条）
+ * @note 超过缓冲区大小时，旧日志会被覆盖
+ *
+ * @see diagnostic_get_log_history()
+ */
+void diagnostic_log(esp_log_level_t level, const char *tag,
+                    const char *format, ...);
+
+/**
+ * @brief 生成诊断报告
+ *
+ * 生成包含系统状态、WiFi状态、ROS状态和最近错误的完整诊断报告。
+ * 报告格式为易读的文本格式。
+ *
+ * @param[out] report 报告缓冲区，不能为NULL
+ * @param[in] max_len 缓冲区大小（字节）
+ * @return 实际写入字节数（不包括结尾的\0）
+ *
+ * @note 建议缓冲区大小至少2048字节
+ * @note 如果缓冲区太小，报告会被截断
+ *
+ * @see diagnostic_report_t
+ */
+size_t diagnostic_generate_report(char *report, size_t max_len);
+
+/**
+ * @brief 注册异常处理器
+ *
+ * 注册自定义的异常处理函数，当系统发生异常时会被调用。
+ *
+ * @param[in] handler 异常处理函数，不能为NULL
+ * @return
+ *   - ESP_OK: 成功
+ *   - ESP_ERR_INVALID_ARG: 参数无效
+ *   - ESP_ERR_INVALID_STATE: 诊断服务未初始化
+ *   - ESP_ERR_NO_MEM: 处理器列表已满
+ *
+ * @note 最多支持4个异常处理器
+ * @note 异常处理器会在ISR上下文中被调用，需要保证线程安全
+ */
+esp_err_t diagnostic_register_exception_handler(
+    diagnostic_exception_handler_t handler
+);
+
+/**
+ * @brief 获取日志历史
+ *
+ * 获取环形缓冲区中存储的历史日志。
+ * 日志按时间顺序排列（最早的在前）。
+ *
+ * @param[out] logs 日志数组，不能为NULL
+ * @param[in] max_count 数组最大容量
+ * @return 实际返回的日志数量
+ *
+ * @note 此函数是线程安全的
+ * @note 返回的日志是副本，不会随缓冲区变化
+ *
+ * @see diagnostic_clear_log_history()
+ */
+size_t diagnostic_get_log_history(diagnostic_log_entry_t *logs,
+                                   size_t max_count);
+
+/**
+ * @brief 清空日志历史
+ *
+ * 清空环形缓冲区中的所有日志。
+ *
+ * @note 此函数是线程安全的
+ * @note 清空后无法恢复
+ *
+ * @see diagnostic_get_log_history()
+ */
+void diagnostic_clear_log_history(void);
 
 #ifdef __cplusplus
 }
